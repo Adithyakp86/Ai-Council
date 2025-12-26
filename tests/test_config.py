@@ -5,9 +5,11 @@ import tempfile
 from pathlib import Path
 from ai_council.utils.config import (
     AICouncilConfig, ModelConfig, LoggingConfig, ExecutionConfig, CostConfig,
+    RoutingRule, ExecutionModeConfig, PluginConfig,
     load_config, create_default_config
 )
-from ai_council.core.models import ExecutionMode
+from ai_council.utils.config_builder import ConfigBuilder, create_development_config, create_production_config
+from ai_council.core.models import ExecutionMode, TaskType, Priority, RiskLevel
 
 
 class TestModelConfig:
@@ -120,9 +122,20 @@ class TestConfigLoading:
         config = create_default_config()
         
         assert isinstance(config, AICouncilConfig)
-        assert len(config.models) >= 2  # Should have at least gpt-4 and claude-3
+        assert len(config.models) >= 3  # Should have at least gpt-4, claude-3, and gpt-3.5-turbo
         assert "gpt-4" in config.models
         assert "claude-3" in config.models
+        assert "gpt-3.5-turbo" in config.models
+        
+        # Check routing rules
+        assert len(config.routing_rules) > 0
+        assert any(rule.name == "high_accuracy_reasoning" for rule in config.routing_rules)
+        
+        # Check execution modes
+        assert len(config.execution_modes) >= 3
+        assert "fast" in config.execution_modes
+        assert "balanced" in config.execution_modes
+        assert "best_quality" in config.execution_modes
     
     def test_load_config_default(self):
         """Test loading config with defaults."""
@@ -148,3 +161,221 @@ class TestConfigLoading:
             
             assert loaded_config.debug is True
             assert loaded_config.logging.level == "DEBUG"
+
+
+class TestRoutingRule:
+    """Test RoutingRule configuration."""
+    
+    def test_routing_rule_creation(self):
+        """Test basic routing rule creation."""
+        rule = RoutingRule(
+            name="test_rule",
+            task_types=[TaskType.REASONING],
+            priority_levels=[Priority.HIGH],
+            preferred_models=["gpt-4"],
+            weight=2.0
+        )
+        assert rule.name == "test_rule"
+        assert TaskType.REASONING in rule.task_types
+        assert Priority.HIGH in rule.priority_levels
+        assert "gpt-4" in rule.preferred_models
+        assert rule.weight == 2.0
+
+
+class TestExecutionModeConfig:
+    """Test ExecutionModeConfig configuration."""
+    
+    def test_execution_mode_config_creation(self):
+        """Test basic execution mode config creation."""
+        config = ExecutionModeConfig(
+            mode=ExecutionMode.FAST,
+            max_parallel_executions=3,
+            timeout_seconds=30.0,
+            accuracy_requirement=0.7
+        )
+        assert config.mode == ExecutionMode.FAST
+        assert config.max_parallel_executions == 3
+        assert config.timeout_seconds == 30.0
+        assert config.accuracy_requirement == 0.7
+
+
+class TestPluginConfig:
+    """Test PluginConfig configuration."""
+    
+    def test_plugin_config_creation(self):
+        """Test basic plugin config creation."""
+        config = PluginConfig(
+            name="test_plugin",
+            module_path="plugins.test",
+            class_name="TestPlugin",
+            enabled=True,
+            config={"param1": "value1"},
+            dependencies=["requests"]
+        )
+        assert config.name == "test_plugin"
+        assert config.module_path == "plugins.test"
+        assert config.class_name == "TestPlugin"
+        assert config.enabled is True
+        assert config.config["param1"] == "value1"
+        assert "requests" in config.dependencies
+
+
+class TestExtendedAICouncilConfig:
+    """Test extended AICouncilConfig functionality."""
+    
+    def test_add_routing_rule(self):
+        """Test adding routing rules."""
+        config = AICouncilConfig()
+        
+        rule = RoutingRule(
+            name="test_rule",
+            task_types=[TaskType.REASONING],
+            preferred_models=["gpt-4"]
+        )
+        
+        config.add_routing_rule(rule)
+        assert len(config.routing_rules) == 1
+        assert config.routing_rules[0].name == "test_rule"
+    
+    def test_get_routing_rules(self):
+        """Test getting routing rules with filters."""
+        config = create_default_config()
+        
+        # Get all rules
+        all_rules = config.get_routing_rules()
+        assert len(all_rules) > 0
+        
+        # Get rules for specific task type
+        reasoning_rules = config.get_routing_rules(task_type=TaskType.REASONING)
+        assert len(reasoning_rules) > 0
+        assert all(TaskType.REASONING in rule.task_types or not rule.task_types for rule in reasoning_rules)
+    
+    def test_add_plugin(self):
+        """Test adding plugins."""
+        config = AICouncilConfig()
+        
+        plugin = PluginConfig(
+            name="test_plugin",
+            module_path="plugins.test",
+            class_name="TestPlugin"
+        )
+        
+        config.add_plugin(plugin)
+        assert "test_plugin" in config.plugins
+        assert config.plugins["test_plugin"].name == "test_plugin"
+    
+    def test_get_enabled_plugins(self):
+        """Test getting enabled plugins."""
+        config = AICouncilConfig()
+        
+        # Add enabled plugin
+        enabled_plugin = PluginConfig(
+            name="enabled_plugin",
+            module_path="plugins.enabled",
+            class_name="EnabledPlugin",
+            enabled=True
+        )
+        config.add_plugin(enabled_plugin)
+        
+        # Add disabled plugin
+        disabled_plugin = PluginConfig(
+            name="disabled_plugin",
+            module_path="plugins.disabled",
+            class_name="DisabledPlugin",
+            enabled=False
+        )
+        config.add_plugin(disabled_plugin)
+        
+        enabled_plugins = config.get_enabled_plugins()
+        assert len(enabled_plugins) == 1
+        assert enabled_plugins[0].name == "enabled_plugin"
+    
+    def test_extended_validation(self):
+        """Test extended validation for new config sections."""
+        config = AICouncilConfig()
+        
+        # Add invalid routing rule
+        invalid_rule = RoutingRule(
+            name="",  # Empty name should fail
+            weight=-1.0  # Negative weight should fail
+        )
+        config.routing_rules.append(invalid_rule)
+        
+        with pytest.raises(ValueError, match="Routing rule must have a name"):
+            config.validate()
+        
+        # Fix name but keep negative weight
+        invalid_rule.name = "test_rule"
+        with pytest.raises(ValueError, match="weight cannot be negative"):
+            config.validate()
+
+
+class TestConfigBuilder:
+    """Test ConfigBuilder utility."""
+    
+    def test_config_builder_basic(self):
+        """Test basic config builder functionality."""
+        config = (ConfigBuilder()
+                 .with_logging(level="DEBUG")
+                 .with_system_settings(debug=True)
+                 .add_model("test-model", "test-provider", "TEST_API_KEY")
+                 .build())
+        
+        assert config.logging.level == "DEBUG"
+        assert config.debug is True
+        assert "test-model" in config.models
+        assert config.models["test-model"].provider == "test-provider"
+    
+    def test_config_builder_routing_rules(self):
+        """Test adding routing rules with builder."""
+        config = (ConfigBuilder()
+                 .add_routing_rule("test_rule", 
+                                 task_types=[TaskType.REASONING],
+                                 preferred_models=["gpt-4"])
+                 .build())
+        
+        assert len(config.routing_rules) == 1
+        assert config.routing_rules[0].name == "test_rule"
+        assert TaskType.REASONING in config.routing_rules[0].task_types
+    
+    def test_config_builder_execution_modes(self):
+        """Test adding execution modes with builder."""
+        config = (ConfigBuilder()
+                 .add_execution_mode("custom_fast", ExecutionMode.FAST,
+                                   max_parallel=2, timeout=15.0)
+                 .build())
+        
+        assert "custom_fast" in config.execution_modes
+        assert config.execution_modes["custom_fast"].mode == ExecutionMode.FAST
+        assert config.execution_modes["custom_fast"].max_parallel_executions == 2
+    
+    def test_config_builder_plugins(self):
+        """Test adding plugins with builder."""
+        config = (ConfigBuilder()
+                 .add_plugin("test_plugin", "plugins.test", "TestPlugin",
+                           config={"param": "value"})
+                 .build())
+        
+        assert "test_plugin" in config.plugins
+        assert config.plugins["test_plugin"].module_path == "plugins.test"
+        assert config.plugins["test_plugin"].config["param"] == "value"
+    
+    def test_create_development_config(self):
+        """Test creating development configuration."""
+        config = create_development_config()
+        
+        assert config.debug is True
+        assert config.environment == "development"
+        assert config.logging.level == "DEBUG"
+        assert config.cost.max_cost_per_request == 1.0
+    
+    def test_create_production_config(self):
+        """Test creating production configuration."""
+        config = create_production_config()
+        
+        assert config.debug is False
+        assert config.environment == "production"
+        assert config.logging.format_json is True
+        assert len(config.models) >= 2
+        assert len(config.routing_rules) >= 1
+        assert len(config.execution_modes) >= 1

@@ -42,6 +42,19 @@ models:
       - creative_output
       - debugging
     enabled: true
+    reliability_score: 0.95
+    average_latency: 3.0
+    strengths:
+      - complex reasoning
+      - code generation
+      - creative tasks
+    weaknesses:
+      - high cost
+      - slower response
+    supported_task_types:
+      - reasoning
+      - code_generation
+      - creative_output
 
   claude-3-sonnet:
     provider: anthropic
@@ -58,6 +71,18 @@ models:
       - fact_checking
       - verification
     enabled: true
+    reliability_score: 0.92
+    average_latency: 2.5
+    strengths:
+      - large context
+      - research
+      - fact checking
+    weaknesses:
+      - limited code generation
+    supported_task_types:
+      - reasoning
+      - research
+      - fact_checking
 
   gpt-3.5-turbo:
     provider: openai
@@ -72,9 +97,117 @@ models:
       - reasoning
       - creative_output
     enabled: true
+    reliability_score: 0.85
+    average_latency: 1.5
+    strengths:
+      - fast
+      - cost-effective
+      - general purpose
+    weaknesses:
+      - lower accuracy
+      - limited complex reasoning
+    supported_task_types:
+      - reasoning
+      - creative_output
+
+# Routing rules for intelligent model selection
+routing_rules:
+  - name: high_accuracy_reasoning
+    task_types:
+      - reasoning
+    priority_levels:
+      - CRITICAL
+      - HIGH
+    preferred_models:
+      - gpt-4
+      - claude-3-sonnet
+    accuracy_threshold: 0.9
+    weight: 2.0
+    enabled: true
+
+  - name: cost_effective_general
+    task_types:
+      - reasoning
+      - creative_output
+    priority_levels:
+      - LOW
+      - MEDIUM
+    preferred_models:
+      - gpt-3.5-turbo
+    cost_threshold: 0.01
+    weight: 1.0
+    enabled: true
+
+  - name: research_tasks
+    task_types:
+      - research
+      - fact_checking
+    preferred_models:
+      - claude-3-sonnet
+    weight: 1.5
+    enabled: true
+
+# Execution mode configurations
+execution_modes:
+  fast:
+    mode: fast
+    max_parallel_executions: 3
+    timeout_seconds: 30.0
+    max_retries: 1
+    enable_arbitration: false
+    enable_synthesis: true
+    accuracy_requirement: 0.7
+    cost_limit: 5.0
+    preferred_model_types:
+      - gpt-3.5-turbo
+    fallback_strategy: cheapest
+
+  balanced:
+    mode: balanced
+    max_parallel_executions: 5
+    timeout_seconds: 60.0
+    max_retries: 3
+    enable_arbitration: true
+    enable_synthesis: true
+    accuracy_requirement: 0.8
+    cost_limit: 10.0
+    preferred_model_types:
+      - gpt-4
+      - claude-3-sonnet
+      - gpt-3.5-turbo
+    fallback_strategy: automatic
+
+  best_quality:
+    mode: best_quality
+    max_parallel_executions: 8
+    timeout_seconds: 120.0
+    max_retries: 5
+    enable_arbitration: true
+    enable_synthesis: true
+    accuracy_requirement: 0.95
+    preferred_model_types:
+      - gpt-4
+      - claude-3-sonnet
+    fallback_strategy: highest_quality
+
+# Plugin configurations
+plugins:
+  # Example custom model plugin
+  # custom_model:
+  #   module_path: plugins.custom_models.my_model
+  #   class_name: MyCustomModel
+  #   enabled: false
+  #   config:
+  #     api_endpoint: https://api.example.com
+  #     model_version: v1.0
+  #   dependencies:
+  #     - requests
+  #     - custom_sdk
+  #   version: 1.0.0
 
 # System settings
 debug: false
 environment: production
 data_dir: ./data
 cache_dir: ./cache
+plugin_dir: ./plugins
