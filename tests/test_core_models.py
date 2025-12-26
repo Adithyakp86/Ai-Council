@@ -2,6 +2,7 @@
 
 import pytest
 from datetime import datetime
+from hypothesis import given, strategies as st
 from ai_council.core.models import (
     Task, Subtask, SelfAssessment, AgentResponse, FinalResponse,
     TaskType, ExecutionMode, RiskLevel, Priority, ComplexityLevel,
@@ -217,3 +218,131 @@ class TestCostBreakdown:
         
         with pytest.raises(ValueError, match="Execution time cannot be negative"):
             CostBreakdown(execution_time=-1.0)
+
+
+class TestDataModelRoundTripConsistency:
+    """Property-based tests for data model round-trip consistency.
+    
+    **Feature: ai-council, Property 1: Data model round-trip consistency**
+    **Validates: Requirements 3.3**
+    """
+    
+    def test_self_assessment_round_trip_consistency_basic(self):
+        """
+        Property 1: Data model round-trip consistency (Basic version)
+        
+        For any valid SelfAssessment data, creating a SelfAssessment object
+        and then accessing its fields should preserve all the original values
+        and maintain validation constraints.
+        
+        **Validates: Requirements 3.3**
+        """
+        # Test with multiple valid combinations
+        test_cases = [
+            {
+                'confidence_score': 0.5,
+                'assumptions': ['test assumption'],
+                'risk_level': RiskLevel.LOW,
+                'estimated_cost': 10.0,
+                'token_usage': 100,
+                'execution_time': 5.0,
+                'model_used': 'gpt-4'
+            },
+            {
+                'confidence_score': 1.0,
+                'assumptions': [],
+                'risk_level': RiskLevel.HIGH,
+                'estimated_cost': 0.0,
+                'token_usage': 0,
+                'execution_time': 0.0,
+                'model_used': 'claude'
+            },
+            {
+                'confidence_score': 0.0,
+                'assumptions': ['assumption1', 'assumption2'],
+                'risk_level': RiskLevel.MEDIUM,
+                'estimated_cost': 50.5,
+                'token_usage': 1000,
+                'execution_time': 15.5,
+                'model_used': 'gemini'
+            }
+        ]
+        
+        for test_data in test_cases:
+            # Create SelfAssessment with test data
+            original_assessment = SelfAssessment(**test_data)
+            
+            # Verify round-trip consistency - all fields should be preserved
+            assert original_assessment.confidence_score == test_data['confidence_score']
+            assert original_assessment.assumptions == test_data['assumptions']
+            assert original_assessment.risk_level == test_data['risk_level']
+            assert original_assessment.estimated_cost == test_data['estimated_cost']
+            assert original_assessment.token_usage == test_data['token_usage']
+            assert original_assessment.execution_time == test_data['execution_time']
+            assert original_assessment.model_used == test_data['model_used']
+            
+            # Verify validation constraints are maintained (Requirements 3.3)
+            assert 0.0 <= original_assessment.confidence_score <= 1.0
+            assert isinstance(original_assessment.assumptions, list)
+            assert isinstance(original_assessment.risk_level, RiskLevel)
+            assert original_assessment.estimated_cost >= 0.0
+            assert original_assessment.token_usage >= 0
+            assert original_assessment.execution_time >= 0.0
+            assert isinstance(original_assessment.model_used, str)
+            assert len(original_assessment.model_used) > 0
+            
+            # Verify timestamp is set and is a datetime
+            assert isinstance(original_assessment.timestamp, datetime)
+    
+    @pytest.mark.property
+    def test_self_assessment_validation_constraints(self):
+        """
+        Property 1: Data model validation constraints
+        
+        Test that SelfAssessment enforces validation constraints as specified
+        in Requirements 3.3: confidence score between 0 and 1, assumptions list,
+        risk level, and cost estimates.
+        
+        **Validates: Requirements 3.3**
+        """
+        # Test confidence score bounds
+        with pytest.raises(ValueError, match="Confidence score must be between 0.0 and 1.0"):
+            SelfAssessment(confidence_score=1.5, model_used="test")
+        
+        with pytest.raises(ValueError, match="Confidence score must be between 0.0 and 1.0"):
+            SelfAssessment(confidence_score=-0.1, model_used="test")
+        
+        # Test cost constraints
+        with pytest.raises(ValueError, match="Estimated cost cannot be negative"):
+            SelfAssessment(estimated_cost=-1.0, model_used="test")
+        
+        # Test token usage constraints
+        with pytest.raises(ValueError, match="Token usage cannot be negative"):
+            SelfAssessment(token_usage=-1, model_used="test")
+        
+        # Test execution time constraints
+        with pytest.raises(ValueError, match="Execution time cannot be negative"):
+            SelfAssessment(execution_time=-1.0, model_used="test")
+        
+        # Test valid boundary values
+        valid_assessment = SelfAssessment(
+            confidence_score=0.0,
+            assumptions=[],
+            risk_level=RiskLevel.LOW,
+            estimated_cost=0.0,
+            token_usage=0,
+            execution_time=0.0,
+            model_used="test"
+        )
+        assert valid_assessment.confidence_score == 0.0
+        
+        valid_assessment_max = SelfAssessment(
+            confidence_score=1.0,
+            assumptions=["test"],
+            risk_level=RiskLevel.CRITICAL,
+            estimated_cost=1000.0,
+            token_usage=10000,
+            execution_time=300.0,
+            model_used="test"
+        )
+        assert valid_assessment_max.confidence_score == 1.0
