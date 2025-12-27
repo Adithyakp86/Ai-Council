@@ -4,26 +4,33 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai-council"
-version = "0.1.0"
-description = "A production-grade multi-agent orchestration system for coordinating AI models"
+version = "1.0.0"
+description = "A production-grade multi-agent AI orchestration system that intelligently coordinates multiple AI models"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.8"
 license = {text = "MIT"}
 authors = [
+    {name = "Shriyash", email = "shriyash@example.com"}
+]
+maintainers = [
     {name = "AI Council Team"}
 ]
-keywords = ["ai", "orchestration", "multi-agent", "llm", "coordination"]
+keywords = ["ai", "orchestration", "multi-agent", "llm", "coordination", "artificial-intelligence", "machine-learning", "ai-models"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Distributed Computing",
 ]
 
 dependencies = [
@@ -55,10 +62,12 @@ test = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/ai-council/ai-council"
-Repository = "https://github.com/ai-council/ai-council"
-Documentation = "https://ai-council.readthedocs.io"
-"Bug Tracker" = "https://github.com/ai-council/ai-council/issues"
+Homepage = "https://github.com/shrixtacy/Ai-Council"
+Repository = "https://github.com/shrixtacy/Ai-Council"
+Documentation = "https://github.com/shrixtacy/Ai-Council/tree/master/docs"
+"Bug Tracker" = "https://github.com/shrixtacy/Ai-Council/issues"
+"Source Code" = "https://github.com/shrixtacy/Ai-Council"
+"Download" = "https://pypi.org/project/ai-council/"
 
 [tool.setuptools.packages.find]
 where = ["."]

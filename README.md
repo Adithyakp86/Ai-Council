@@ -27,8 +27,12 @@ In today's AI landscape, **relying on a single AI model is like using only one t
 ### Installation
 
 ```bash
-git clone https://github.com/yourusername/ai-council.git
-cd ai-council
+# Install from PyPI (recommended)
+pip install ai-council
+
+# Or install from source
+git clone https://github.com/shrixtacy/Ai-Council.git
+cd Ai-Council
 pip install -e .
 ```
 
