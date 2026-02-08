@@ -153,7 +153,8 @@ async def process_request(
                 request_id=request_id,
                 user_input=request_data.content,
                 execution_mode=execution_mode,
-                db=db
+                db=db,
+                user_id=str(current_user.id)
             )
         )
         
@@ -187,13 +188,14 @@ async def _process_request_background(
     request_id: str,
     user_input: str,
     execution_mode: ExecutionMode,
-    db: AsyncSession
+    db: AsyncSession,
+    user_id: str = None
 ):
     """
     Process request in background and update database.
     
     This function:
-    1. Processes the request through AI Council
+    1. Processes the request through AI Council (with user API keys if available)
     2. Updates the Request status to "completed" or "failed"
     3. Creates a Response record with the results
     
@@ -202,6 +204,7 @@ async def _process_request_background(
         user_input: User's input text
         execution_mode: Execution mode
         db: Database session
+        user_id: User ID to load user-specific API keys
     """
     # Create a new database session for background processing
     from app.core.database import AsyncSessionLocal
@@ -213,11 +216,12 @@ async def _process_request_background(
             # Get council bridge
             bridge = get_council_bridge()
             
-            # Process request through AI Council
+            # Process request through AI Council with user_id for API key loading
             final_response = await bridge.process_request(
                 request_id=request_id,
                 user_input=user_input,
-                execution_mode=execution_mode
+                execution_mode=execution_mode,
+                user_id=user_id
             )
             
             # Update Request record

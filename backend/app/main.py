@@ -10,7 +10,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.config import settings
 from app.core.provider_config import initialize_provider_config
-from app.api import auth, websocket, example_protected, council, user, admin
+from app.api import auth, websocket, example_protected, council, user, admin, user_api_keys
 from app.services.websocket_manager import websocket_manager
 
 logger = logging.getLogger(__name__)
@@ -85,6 +85,7 @@ app.include_router(websocket.router, prefix=settings.API_V1_PREFIX)
 app.include_router(example_protected.router, prefix=settings.API_V1_PREFIX)
 app.include_router(council.router, prefix=settings.API_V1_PREFIX)
 app.include_router(user.router, prefix=settings.API_V1_PREFIX)
+app.include_router(user_api_keys.router, prefix=settings.API_V1_PREFIX)
 app.include_router(admin.router, prefix=settings.API_V1_PREFIX)
 
 

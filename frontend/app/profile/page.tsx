@@ -20,8 +20,10 @@ import { authApi } from '@/lib/auth-api'
 import { useAuthStore } from '@/lib/auth-store'
 import { validateEmail, validateName, validatePassword } from '@/lib/validation'
 import { Loader2, User, Lock, Trash2 } from 'lucide-react'
+import { ProtectedRoute } from '@/components/auth/protected-route'
+import { AuthenticatedLayout } from '@/components/layout/authenticated-layout'
 
-export default function ProfilePage() {
+function ProfileContent() {
   const router = useRouter()
   const { toast } = useToast()
   const { user, isAuthenticated, updateUser, logout } = useAuthStore()
@@ -363,4 +365,14 @@ export default function ProfilePage() {
       </div>
     </div>
   )
+}
+
+export default function ProfilePage() {
+  return (
+    <ProtectedRoute>
+      <AuthenticatedLayout>
+        <ProfileContent />
+      </AuthenticatedLayout>
+    </ProtectedRoute>
+  );
 }

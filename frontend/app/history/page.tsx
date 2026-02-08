@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { councilApi } from '@/lib/council-api';
 import { ProtectedRoute } from '@/components/auth/protected-route';
+import { AuthenticatedLayout } from '@/components/layout/authenticated-layout';
 import { Search, ChevronLeft, ChevronRight, Calendar, Filter } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -116,12 +117,13 @@ export default function HistoryPage() {
 
   return (
     <ProtectedRoute>
-      <div className="container mx-auto py-8 px-4 max-w-7xl">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold mb-2">Request History</h1>
-          <p className="text-muted-foreground">
-            View and manage your past AI Council requests
-          </p>
+      <AuthenticatedLayout>
+        <div className="container mx-auto py-8 px-4 max-w-7xl">
+          <div className="mb-8">
+            <h1 className="text-3xl font-bold mb-2">Request History</h1>
+            <p className="text-muted-foreground">
+              View and manage your past AI Council requests
+            </p>
         </div>
 
         {/* Filters */}
@@ -316,6 +318,7 @@ export default function HistoryPage() {
           </div>
         )}
       </div>
+      </AuthenticatedLayout>
     </ProtectedRoute>
   );
 }

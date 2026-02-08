@@ -8,6 +8,7 @@ import { Users, Activity, DollarSign, CheckCircle, AlertCircle } from 'lucide-re
 import { UserManagementTable } from '@/components/admin/user-management-table'
 import { SystemMonitoring } from '@/components/admin/system-monitoring'
 import { AdminRoute } from '@/components/admin/admin-route'
+import { AuthenticatedLayout } from '@/components/layout/authenticated-layout'
 
 function AdminDashboardContent() {
   const [monitoring, setMonitoring] = useState<MonitoringData | null>(null)
@@ -146,7 +147,9 @@ function AdminDashboardContent() {
 export default function AdminDashboard() {
   return (
     <AdminRoute>
-      <AdminDashboardContent />
+      <AuthenticatedLayout>
+        <AdminDashboardContent />
+      </AuthenticatedLayout>
     </AdminRoute>
   )
 }
