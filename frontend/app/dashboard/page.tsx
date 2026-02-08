@@ -3,11 +3,14 @@
 import { useState, useEffect } from 'react';
 import { useAuthStore } from '@/lib/auth-store';
 import { ProtectedRoute } from '@/components/auth/protected-route';
+import { AuthenticatedLayout } from '@/components/layout/authenticated-layout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useRouter } from 'next/navigation';
 import { apiClient } from '@/lib/api-client';
 import { useToast } from '@/hooks/use-toast';
+import { APIKeyWizard } from '@/components/onboarding/api-key-wizard';
+import { useAPIKeyWizard } from '@/hooks/use-api-key-wizard';
 import {
   Activity,
   DollarSign,
@@ -48,14 +51,29 @@ interface DashboardStats {
 
 function DashboardContent() {
   const router = useRouter();
-  const { user, logout } = useAuthStore();
+  const { user } = useAuthStore();
   const { toast } = useToast();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
+  
+  // API Key Wizard
+  const { shouldShowWizard, isChecking, markWizardCompleted } = useAPIKeyWizard();
+  const [wizardOpen, setWizardOpen] = useState(false);
 
   useEffect(() => {
     fetchStats();
   }, []);
+
+  // Show wizard when needed
+  useEffect(() => {
+    if (!isChecking && shouldShowWizard) {
+      // Delay showing wizard slightly to allow page to render
+      const timer = setTimeout(() => {
+        setWizardOpen(true);
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [isChecking, shouldShowWizard]);
 
   const fetchStats = async () => {
     setLoading(true);
@@ -71,11 +89,6 @@ function DashboardContent() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleLogout = async () => {
-    await logout();
-    router.push('/');
   };
 
   const getModeIcon = (mode: string) => {
@@ -103,15 +116,6 @@ function DashboardContent() {
           <div className="flex gap-2">
             <Button onClick={() => router.push('/query')}>
               New Query
-            </Button>
-            <Button variant="outline" onClick={() => router.push('/history')}>
-              History
-            </Button>
-            <Button variant="outline" onClick={() => router.push('/profile')}>
-              Profile
-            </Button>
-            <Button variant="outline" onClick={handleLogout}>
-              Logout
             </Button>
           </div>
         </div>
@@ -426,6 +430,13 @@ function DashboardContent() {
           </Card>
         )}
       </div>
+
+      {/* API Key Setup Wizard */}
+      <APIKeyWizard
+        open={wizardOpen}
+        onOpenChange={setWizardOpen}
+        onComplete={markWizardCompleted}
+      />
     </div>
   );
 }
@@ -433,7 +444,9 @@ function DashboardContent() {
 export default function DashboardPage() {
   return (
     <ProtectedRoute>
-      <DashboardContent />
+      <AuthenticatedLayout>
+        <DashboardContent />
+      </AuthenticatedLayout>
     </ProtectedRoute>
   );
 }

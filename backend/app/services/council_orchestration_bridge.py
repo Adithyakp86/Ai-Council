@@ -50,6 +50,7 @@ class CouncilOrchestrationBridge:
         self.provider_config = get_provider_config()
         self._available_providers: List[str] = []
         self._provider_selection_log: List[Dict[str, Any]] = []
+        self._api_key_usage_log: List[Dict[str, Any]] = []
         
         logger.info("CouncilOrchestrationBridge initialized")
     
@@ -57,21 +58,24 @@ class CouncilOrchestrationBridge:
         self,
         request_id: str,
         user_input: str,
-        execution_mode: ExecutionMode
+        execution_mode: ExecutionMode,
+        user_id: Optional[str] = None
     ) -> FinalResponse:
         """
         Process a request through AI Council with real-time WebSocket updates.
         
         This method:
-        1. Initializes AI Council with cloud adapters
-        2. Sets up event hooks for WebSocket updates
-        3. Processes the request through AI Council
-        4. Returns the final response
+        1. Loads user's API keys from database if user_id provided
+        2. Initializes AI Council with cloud adapters (user keys or system keys)
+        3. Sets up event hooks for WebSocket updates
+        4. Processes the request through AI Council
+        5. Returns the final response with API key usage metadata
         
         Args:
             request_id: Unique identifier for the request
             user_input: User's input text to process
             execution_mode: Execution mode (FAST, BALANCED, BEST_QUALITY)
+            user_id: Optional user ID to load user-specific API keys
             
         Returns:
             FinalResponse: The final synthesized response from AI Council
@@ -79,12 +83,25 @@ class CouncilOrchestrationBridge:
         self.current_request_id = request_id
         self._pending_routing_assignments = []
         self._provider_selection_log = []
+        self._api_key_usage_log = []  # Track which keys were used
         
         try:
             logger.info(f"Processing request {request_id} in {execution_mode.value} mode")
             
-            # Detect available providers at runtime
-            self._available_providers = self._detect_available_providers()
+            # Load user API keys if user_id provided
+            user_api_keys = {}
+            if user_id:
+                user_api_keys = await self._load_user_api_keys(user_id)
+                if user_api_keys:
+                    logger.info(
+                        f"Loaded {len(user_api_keys)} user API keys for user {user_id}: "
+                        f"{', '.join(user_api_keys.keys())}"
+                    )
+                else:
+                    logger.info(f"No user API keys found for user {user_id}, using system keys")
+            
+            # Detect available providers at runtime (considering both user and system keys)
+            self._available_providers = self._detect_available_providers(user_api_keys)
             
             if not self._available_providers:
                 logger.error("No AI providers available - cannot process request")
@@ -107,7 +124,8 @@ class CouncilOrchestrationBridge:
             logger.info(f"Available providers: {', '.join(self._available_providers)}")
             
             # Initialize AI Council with cloud AI adapters and execution mode config
-            self.ai_council = self._create_ai_council(execution_mode)
+            # Pass user_api_keys to use user's keys where available
+            self.ai_council = self._create_ai_council(execution_mode, user_api_keys)
             
             # Set up event hooks for WebSocket updates
             self._setup_event_hooks(request_id)
@@ -144,6 +162,17 @@ class CouncilOrchestrationBridge:
                 logger.info(f"Sent routing_complete message with {len(self._pending_routing_assignments)} assignments")
             
             logger.info(f"Request {request_id} processed successfully")
+            
+            # Mark user API keys as used if any were used
+            if user_id and self._api_key_usage_log:
+                user_providers_used = [
+                    log_entry["provider"]
+                    for log_entry in self._api_key_usage_log
+                    if log_entry["key_source"] == "user"
+                ]
+                if user_providers_used:
+                    await self._mark_user_api_keys_as_used(user_id, list(set(user_providers_used)))
+            
             return response
             
         except Exception as e:
@@ -171,22 +200,122 @@ class CouncilOrchestrationBridge:
             self.current_request_id = None
             self._pending_routing_assignments = []
             self._provider_selection_log = []
+            self._api_key_usage_log = []
     
-    def _detect_available_providers(self) -> List[str]:
+    async def _load_user_api_keys(self, user_id: str) -> Dict[str, str]:
+        """
+        Load user's API keys from the database.
+        
+        Args:
+            user_id: User ID to load API keys for
+            
+        Returns:
+            Dictionary mapping provider names to decrypted API keys
+        """
+        from app.core.database import AsyncSessionLocal
+        from app.models.user_api_key import UserAPIKey
+        from sqlalchemy import select
+        from uuid import UUID
+        
+        user_api_keys = {}
+        
+        try:
+            async with AsyncSessionLocal() as session:
+                # Query active API keys for this user
+                result = await session.execute(
+                    select(UserAPIKey).where(
+                        UserAPIKey.user_id == UUID(user_id),
+                        UserAPIKey.is_active == True
+                    )
+                )
+                api_keys = result.scalars().all()
+                
+                # Decrypt and store API keys
+                for api_key_record in api_keys:
+                    try:
+                        decrypted_key = api_key_record.decrypt_key()
+                        user_api_keys[api_key_record.provider_name] = decrypted_key
+                        logger.debug(f"Loaded user API key for provider: {api_key_record.provider_name}")
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to decrypt API key for provider {api_key_record.provider_name}: {e}"
+                        )
+                        continue
+                
+        except Exception as e:
+            logger.error(f"Error loading user API keys: {e}", exc_info=True)
+        
+        return user_api_keys
+    
+    async def _mark_user_api_keys_as_used(self, user_id: str, providers_used: List[str]) -> None:
+        """
+        Mark user API keys as used by updating their last_used_at timestamp.
+        
+        Args:
+            user_id: User ID whose API keys were used
+            providers_used: List of provider names that were used
+        """
+        from app.core.database import AsyncSessionLocal
+        from app.models.user_api_key import UserAPIKey
+        from sqlalchemy import select
+        from uuid import UUID
+        from datetime import timezone
+        
+        if not providers_used:
+            return
+        
+        try:
+            async with AsyncSessionLocal() as session:
+                # Query API keys for the providers that were used
+                result = await session.execute(
+                    select(UserAPIKey).where(
+                        UserAPIKey.user_id == UUID(user_id),
+                        UserAPIKey.provider_name.in_(providers_used),
+                        UserAPIKey.is_active == True
+                    )
+                )
+                api_keys = result.scalars().all()
+                
+                # Update last_used_at for each key
+                for api_key_record in api_keys:
+                    api_key_record.mark_as_used()
+                    logger.debug(
+                        f"Marked user API key as used: user={user_id}, "
+                        f"provider={api_key_record.provider_name}"
+                    )
+                
+                await session.commit()
+                
+                logger.info(
+                    f"Updated last_used_at for {len(api_keys)} user API keys "
+                    f"(user={user_id}, providers={', '.join(providers_used)})"
+                )
+                
+        except Exception as e:
+            logger.error(f"Error marking user API keys as used: {e}", exc_info=True)
+    
+    def _detect_available_providers(self, user_api_keys: Dict[str, str] = None) -> List[str]:
         """
         Detect which providers are available at runtime based on API key configuration.
+        Prioritizes user API keys over system API keys.
+        
+        Args:
+            user_api_keys: Optional dictionary of user's API keys by provider name
         
         Returns:
             List of available provider names
         """
+        if user_api_keys is None:
+            user_api_keys = {}
+        
         available = []
         configured_providers = self.provider_config.get_configured_providers()
         
         logger.info(f"Detecting available providers from {len(configured_providers)} configured providers")
         
         for provider_name in configured_providers:
-            # Check if provider has valid API key or endpoint
-            api_key = self.provider_config.get_api_key(provider_name)
+            # Check user API key first, then fall back to system API key
+            api_key = user_api_keys.get(provider_name) or self.provider_config.get_api_key(provider_name)
             
             if provider_name == "ollama":
                 # Ollama doesn't need API key, just check if endpoint is configured
@@ -196,7 +325,9 @@ class CouncilOrchestrationBridge:
                     logger.info(f"✓ Provider '{provider_name}' available (endpoint: {endpoint})")
             elif api_key:
                 available.append(provider_name)
-                logger.info(f"✓ Provider '{provider_name}' available (API key configured)")
+                # Log whether using user or system key
+                key_source = "user" if provider_name in user_api_keys else "system"
+                logger.info(f"✓ Provider '{provider_name}' available ({key_source} API key configured)")
             else:
                 logger.warning(f"✗ Provider '{provider_name}' configured but no API key found")
         
@@ -345,22 +476,29 @@ class CouncilOrchestrationBridge:
             f"alternatives={len(alternatives)}"
         )
     
-    def _create_ai_council(self, execution_mode: ExecutionMode) -> OrchestrationLayer:
+    def _create_ai_council(self, execution_mode: ExecutionMode, user_api_keys: Dict[str, str] = None) -> OrchestrationLayer:
         """
         Create AI Council instance with cloud AI adapters for available providers only.
+        Uses user API keys where available, falls back to system keys.
         
         This method:
         1. Creates AI Council configuration with execution mode settings
         2. Initializes the factory
         3. Registers cloud AI models ONLY from available providers
-        4. Returns the orchestration layer
+        4. Uses user API keys if provided, otherwise uses system keys
+        5. Tracks which API keys (user vs system) are used for each model
+        6. Returns the orchestration layer
         
         Args:
             execution_mode: The execution mode to configure AI Council with
+            user_api_keys: Optional dictionary of user's API keys by provider name
         
         Returns:
             OrchestrationLayer: Configured AI Council orchestration layer
         """
+        if user_api_keys is None:
+            user_api_keys = {}
+        
         logger.info(f"Creating AI Council with cloud AI adapters for {execution_mode.value} mode")
         
         # Get execution mode configuration
@@ -405,17 +543,27 @@ class CouncilOrchestrationBridge:
                 continue
             
             try:
-                # Get API key for this provider
-                api_key = self.provider_config.get_api_key(provider)
+                # Get API key for this provider - prioritize user key over system key
+                api_key = user_api_keys.get(provider) or self.provider_config.get_api_key(provider)
+                key_source = "user" if provider in user_api_keys else "system"
                 
                 # For Ollama, use empty string as API key (not needed)
                 if provider == "ollama":
                     api_key = ""
+                    key_source = "system"  # Ollama doesn't use keys
                 
                 if not api_key and provider != "ollama":
                     logger.warning(f"No API key for provider '{provider}', skipping model {model_id}")
                     skipped_count += 1
                     continue
+                
+                # Track API key usage for this model
+                self._api_key_usage_log.append({
+                    "model_id": model_id,
+                    "provider": provider,
+                    "key_source": key_source,
+                    "timestamp": datetime.utcnow().isoformat()
+                })
                 
                 # Create cloud AI adapter
                 adapter = CloudAIAdapter(
@@ -446,7 +594,9 @@ class CouncilOrchestrationBridge:
                 # Register model with factory's registry
                 factory.model_registry.register_model(adapter, capabilities)
                 
-                logger.info(f"✓ Registered model: {model_id} (provider: {provider})")
+                logger.info(
+                    f"✓ Registered model: {model_id} (provider: {provider}, key_source: {key_source})"
+                )
                 registered_count += 1
                 
             except Exception as e:
@@ -1073,6 +1223,24 @@ class CouncilOrchestrationBridge:
                     logger.info(
                         f"Provider usage summary: "
                         f"{', '.join(f'{p}={c}' for p, c in provider_usage.items())}"
+                    )
+                
+                # Add API key usage information to metadata
+                if self._api_key_usage_log:
+                    final_response_data["apiKeyUsageLog"] = self._api_key_usage_log
+                    
+                    # Summarize API key usage (user vs system)
+                    key_usage_summary = {"user": 0, "system": 0}
+                    for log_entry in self._api_key_usage_log:
+                        key_source = log_entry["key_source"]
+                        key_usage_summary[key_source] = key_usage_summary.get(key_source, 0) + 1
+                    
+                    final_response_data["apiKeyUsageSummary"] = key_usage_summary
+                    
+                    logger.info(
+                        f"API key usage summary: "
+                        f"user={key_usage_summary.get('user', 0)}, "
+                        f"system={key_usage_summary.get('system', 0)}"
                     )
                 
                 # Add error message if synthesis failed
