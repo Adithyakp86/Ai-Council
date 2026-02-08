@@ -9,9 +9,14 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
 
     # Database Configuration
-    DATABASE_URL: str = "postgresql://user:password@localhost:5432/ai_council"
+    DATABASE_URL: str = "sqlite:///./ai_council.db"
     DATABASE_POOL_SIZE: int = 20
     DATABASE_MAX_OVERFLOW: int = 10
+
+    # Supabase Configuration
+    SUPABASE_URL: str = ""
+    SUPABASE_ANON_KEY: str = ""
+    SUPABASE_SERVICE_ROLE_KEY: str = ""
 
     # Redis Configuration
     REDIS_URL: str = "redis://localhost:6379/0"

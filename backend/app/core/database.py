@@ -5,13 +5,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
-from app.models.base import Base  # Import Base from models
+from app.models.base import Base
 
-# Create sync engine for migrations and testing
+# Create sync engine
 sync_engine = create_engine(
     settings.DATABASE_URL,
-    pool_size=settings.DATABASE_POOL_SIZE,
-    max_overflow=settings.DATABASE_MAX_OVERFLOW,
+    connect_args={"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {},
     echo=settings.DEBUG,
 )
 
@@ -38,51 +37,5 @@ def get_sync_session() -> Session:
         session.close()
 
 
-# Async support (optional, requires asyncpg)
-try:
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-    
-    # Convert postgresql:// to postgresql+asyncpg:// for async support
-    async_database_url = settings.DATABASE_URL.replace(
-        "postgresql://", "postgresql+asyncpg://"
-    )
-    
-    # Create async engine
-    async_engine = create_async_engine(
-        async_database_url,
-        pool_size=settings.DATABASE_POOL_SIZE,
-        max_overflow=settings.DATABASE_MAX_OVERFLOW,
-        echo=settings.DEBUG,
-    )
-    
-    # Create async session factory
-    AsyncSessionLocal = async_sessionmaker(
-        async_engine,
-        class_=AsyncSession,
-        expire_on_commit=False,
-        autocommit=False,
-        autoflush=False,
-    )
-    
-    async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
-        """Get async database session."""
-        async with AsyncSessionLocal() as session:
-            try:
-                yield session
-                await session.commit()
-            except Exception:
-                await session.rollback()
-                raise
-            finally:
-                await session.close()
-    
-    # Use async session by default if available
-    get_db = get_async_session
-                
-except ImportError:
-    # asyncpg not installed, async support disabled
-    async_engine = None
-    AsyncSessionLocal = None
-    get_async_session = None
-    # Fall back to sync session
-    get_db = get_sync_session
+# Use sync session
+get_db = get_sync_session

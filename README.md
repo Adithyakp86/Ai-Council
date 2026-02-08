@@ -202,12 +202,21 @@ print(f"Circuit Breakers: {status.circuit_breakers}")
 
 ## 📚 Documentation
 
+### Setup & Configuration
 | Document | Description |
 |----------|-------------|
-| **[🏗️ Architecture Guide](./docs/architecture/ARCHITECTURE.md)** | Detailed system architecture and design patterns |
-| **[💼 Business Case](./docs/business/BUSINESS_CASE.md)** | Why AI Council matters for modern businesses |
-| **[📖 Usage Guide](./docs/usage/USAGE_GUIDE.md)** | Comprehensive usage examples and patterns |
-| **[🔧 API Reference](./docs/API_REFERENCE.md)** | Complete API documentation |
+| **[⚡ Quick Start](./docs/QUICK_START.md)** | Get running in 5 minutes |
+| **[🔧 Backend Setup](./backend/SETUP.md)** | Complete backend configuration guide |
+| **[🗄️ Database Schema](./backend/database-schema.sql)** | One-shot Supabase database setup |
+
+### Additional Resources
+| Document | Description |
+|----------|-------------|
+| **[✅ Setup Checklist](./docs/SETUP_CHECKLIST.md)** | Complete setup verification |
+| **[🔧 Troubleshooting](./docs/TROUBLESHOOTING.md)** | Common issues and solutions |
+| **[🗺️ Implementation Roadmap](./docs/IMPLEMENTATION_ROADMAP.md)** | Development roadmap |
+| **[🚀 Production Deployment](./docs/PRODUCTION_DEPLOYMENT_PLAN.md)** | Deploy to production |
+| **[🔑 Backend Docs](./backend/docs/)** | API keys, providers, configuration |
 | **[🚀 Examples](./examples/)** | Ready-to-run code examples |
 
 ## 🧪 Testing & Validation

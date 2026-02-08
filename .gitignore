@@ -172,13 +172,16 @@ cache/
 logs/
 *.log
 plugins/
-.kiro/
 demo_config.yaml
 *_example.py
 usage_example.py
 how_to_use.py
 simple_usage.py
 custom_config_example.py
+
+# Kiro - Keep specs but ignore other Kiro files
+.kiro/settings/
+.kiro/cache/
 
 # PyPI publishing
 .pypirc
@@ -193,3 +196,28 @@ upload_commands.txt
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Temporary documentation files (keep only docs/ folder)
+*_COMPLETE.md
+*_IMPLEMENTATION.md
+*_SUMMARY.md
+*_REPORT.md
+test-*.py
+verify-*.ps1
+setup-*.ps1
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env.local
+frontend/.env.local.*
+frontend/.env*.local
+
+# Backend
+backend/.env
+backend/.env.local
+backend/ai_council.db
+backend/ai_council.db-*
+backend/poetry.lock
+backend/.hypothesis/

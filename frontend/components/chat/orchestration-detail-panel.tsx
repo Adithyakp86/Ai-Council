@@ -121,27 +121,29 @@ export function OrchestrationDetailPanel({ response }: OrchestrationDetailPanelP
                       <Badge variant="outline" className="text-xs">
                         Subtask {index + 1}
                       </Badge>
-                      {subtask.taskType && (
-                        <Badge variant="secondary" className="text-xs">
-                          {subtask.taskType}
-                        </Badge>
-                      )}
+                      <Badge variant="secondary" className="text-xs">
+                        {subtask.modelId}
+                      </Badge>
                     </div>
                     <p className="text-sm">{subtask.content}</p>
                   </div>
-                  {subtask.status === 'completed' ? (
-                    <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
-                  ) : (
-                    <AlertCircle className="h-4 w-4 text-orange-500 flex-shrink-0" />
-                  )}
+                  <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
                 </div>
 
-                {subtask.result && (
-                  <div className="text-xs text-muted-foreground bg-muted p-2 rounded">
-                    {subtask.result.substring(0, 150)}
-                    {subtask.result.length > 150 && '...'}
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div className="flex items-center gap-1">
+                    <Target className="h-3 w-3" />
+                    <span>Confidence: {(subtask.confidence * 100).toFixed(0)}%</span>
                   </div>
-                )}
+                  <div className="flex items-center gap-1">
+                    <Clock className="h-3 w-3" />
+                    <span>{subtask.executionTime.toFixed(2)}s</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <DollarSign className="h-3 w-3" />
+                    <span>${subtask.cost.toFixed(4)}</span>
+                  </div>
+                </div>
               </div>
             ))}
           </AccordionContent>
@@ -170,7 +172,7 @@ export function OrchestrationDetailPanel({ response }: OrchestrationDetailPanelP
                 </div>
                 <div className="text-right">
                   <Badge variant="default" className="mb-1">
-                    {subtask.assignedModel || 'Unknown'}
+                    {subtask.modelId || 'Unknown'}
                   </Badge>
                   {subtask.confidence !== undefined && (
                     <div className="text-xs text-muted-foreground">
@@ -225,7 +227,7 @@ export function OrchestrationDetailPanel({ response }: OrchestrationDetailPanelP
                 {modelsUsed.map((model, index) => {
                   // Calculate cost for this model (sum of all subtasks using this model)
                   const modelCost = subtaskResults
-                    .filter((st) => st.assignedModel === model)
+                    .filter((st) => st.modelId === model)
                     .reduce((sum, st) => sum + (st.cost || 0), 0);
                   const percentage = response.totalCost > 0 ? (modelCost / response.totalCost) * 100 : 0;
                   
@@ -275,7 +277,7 @@ export function OrchestrationDetailPanel({ response }: OrchestrationDetailPanelP
                       </span>
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {subtask.assignedModel || 'Unknown model'}
+                      {subtask.modelId || 'Unknown model'}
                     </div>
                   </div>
                 </div>
