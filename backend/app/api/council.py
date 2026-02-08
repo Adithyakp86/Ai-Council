@@ -251,6 +251,29 @@ async def _process_request_background(
                 session.add(db_response)
                 await session.commit()
                 
+                # Track provider costs
+                if final_response.cost_breakdown and hasattr(final_response.cost_breakdown, 'by_subtask'):
+                    try:
+                        from app.services.provider_cost_tracker import get_provider_cost_tracker
+                        provider_cost_tracker = get_provider_cost_tracker()
+                        
+                        # Extract subtask costs from cost breakdown
+                        subtask_costs = []
+                        for subtask_cost in final_response.cost_breakdown.by_subtask:
+                            subtask_costs.append({
+                                "model_id": subtask_cost.get("model_id", "unknown"),
+                                "input_tokens": subtask_cost.get("input_tokens", 0),
+                                "output_tokens": subtask_cost.get("output_tokens", 0),
+                                "cost": subtask_cost.get("cost", 0.0)
+                            })
+                        
+                        await provider_cost_tracker.track_request_costs(
+                            session, UUID(request_id), subtask_costs
+                        )
+                        logger.info(f"Tracked provider costs for request {request_id}")
+                    except Exception as cost_error:
+                        logger.warning(f"Failed to track provider costs: {cost_error}")
+                
                 # Invalidate user stats cache
                 try:
                     from app.core.redis import redis_client

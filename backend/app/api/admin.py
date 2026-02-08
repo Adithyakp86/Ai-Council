@@ -349,6 +349,7 @@ class MonitoringResponse(BaseModel):
     active_websockets: int
     provider_health: Dict[str, ProviderHealthStatus]
     circuit_breakers: Dict[str, CircuitBreakerStatus]
+    provider_cost_breakdown: Dict[str, Any]
 
 
 @router.get("/monitoring", response_model=MonitoringResponse)
@@ -440,6 +441,13 @@ async def get_monitoring_data(
             timeout=stats["timeout"]
         )
     
+    # Get provider cost breakdown for last 24 hours
+    from app.services.provider_cost_tracker import get_provider_cost_tracker
+    provider_cost_tracker = get_provider_cost_tracker()
+    provider_cost_breakdown = await provider_cost_tracker.get_provider_costs_system_wide(
+        db, start_date=twenty_four_hours_ago
+    )
+    
     return MonitoringResponse(
         total_users=total_users,
         requests_last_24h=requests_last_24h,
@@ -448,7 +456,8 @@ async def get_monitoring_data(
         success_rate=success_rate,
         active_websockets=active_websockets,
         provider_health=provider_health,
-        circuit_breakers=circuit_breakers
+        circuit_breakers=circuit_breakers,
+        provider_cost_breakdown=provider_cost_breakdown
     )
 
 
@@ -476,3 +485,170 @@ async def _check_provider_health() -> Dict[str, ProviderHealthStatus]:
         )
     
     return result
+
+
+
+class MonthlyReportResponse(BaseModel):
+    """Monthly cost report response."""
+    year: int
+    month: int
+    month_name: str
+    start_date: str
+    end_date: str
+    by_provider: List[Dict[str, Any]]
+    total_cost: float
+    total_requests: int
+    estimated_savings: float
+    free_provider_usage_percent: float
+
+
+@router.get("/reports/monthly", response_model=MonthlyReportResponse)
+async def get_monthly_cost_report(
+    year: Optional[int] = Query(None, description="Year (defaults to current year)"),
+    month: Optional[int] = Query(None, ge=1, le=12, description="Month (defaults to current month)"),
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin_user)
+):
+    """
+    Generate monthly cost report by provider.
+    
+    Requires admin role for access.
+    
+    Args:
+        year: Year (defaults to current year)
+        month: Month (defaults to current month)
+        db: Database session
+        current_admin: Current admin user
+        
+    Returns:
+        Monthly cost report with provider breakdown
+    """
+    from app.services.provider_cost_tracker import get_provider_cost_tracker
+    
+    provider_cost_tracker = get_provider_cost_tracker()
+    report = await provider_cost_tracker.get_monthly_cost_report(
+        db, user_id=None, year=year, month=month
+    )
+    
+    return MonthlyReportResponse(**report)
+
+
+class CostThresholdResponse(BaseModel):
+    """Cost threshold check response."""
+    user_id: str
+    period_days: int
+    threshold: float
+    total_cost: float
+    exceeds_threshold: bool
+    percentage_of_threshold: float
+    by_provider: List[Dict[str, Any]]
+
+
+@router.get("/costs/threshold/{user_id}", response_model=CostThresholdResponse)
+async def check_user_cost_threshold(
+    user_id: str,
+    threshold: float = Query(10.0, ge=0, description="Cost threshold in USD"),
+    period_days: int = Query(30, ge=1, le=365, description="Number of days to check"),
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin_user)
+):
+    """
+    Check if user's costs exceed threshold in the given period.
+    
+    Requires admin role for access.
+    
+    Args:
+        user_id: User ID to check
+        threshold: Cost threshold in USD
+        period_days: Number of days to check
+        db: Database session
+        current_admin: Current admin user
+        
+    Returns:
+        Cost threshold check results
+        
+    Raises:
+        HTTPException 400: If user ID is invalid
+    """
+    # Convert string UUID to UUID object
+    try:
+        user_uuid = UUID(user_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user ID format"
+        )
+    
+    from app.services.provider_cost_tracker import get_provider_cost_tracker
+    
+    provider_cost_tracker = get_provider_cost_tracker()
+    result = await provider_cost_tracker.check_cost_threshold(
+        db, user_uuid, threshold, period_days
+    )
+    
+    return CostThresholdResponse(**result)
+
+
+class ProviderCostBreakdownResponse(BaseModel):
+    """Provider cost breakdown response."""
+    by_provider: List[Dict[str, Any]]
+    total_cost: float
+    total_requests: int
+    estimated_savings: float
+    free_provider_usage_percent: float
+
+
+@router.get("/costs/providers", response_model=ProviderCostBreakdownResponse)
+async def get_provider_cost_breakdown(
+    start_date: Optional[str] = Query(None, description="Start date (ISO format)"),
+    end_date: Optional[str] = Query(None, description="End date (ISO format)"),
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin_user)
+):
+    """
+    Get system-wide provider cost breakdown.
+    
+    Requires admin role for access.
+    
+    Args:
+        start_date: Optional start date filter (ISO format)
+        end_date: Optional end date filter (ISO format)
+        db: Database session
+        current_admin: Current admin user
+        
+    Returns:
+        Provider cost breakdown
+        
+    Raises:
+        HTTPException 400: If date format is invalid
+    """
+    from app.services.provider_cost_tracker import get_provider_cost_tracker
+    
+    # Parse dates if provided
+    start_dt = None
+    end_dt = None
+    
+    if start_date:
+        try:
+            start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid start_date format. Use ISO format (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)"
+            )
+    
+    if end_date:
+        try:
+            end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid end_date format. Use ISO format (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)"
+            )
+    
+    provider_cost_tracker = get_provider_cost_tracker()
+    breakdown = await provider_cost_tracker.get_provider_costs_system_wide(
+        db, start_date=start_dt, end_date=end_dt
+    )
+    
+    return ProviderCostBreakdownResponse(**breakdown)

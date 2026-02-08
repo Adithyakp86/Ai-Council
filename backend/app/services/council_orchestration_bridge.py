@@ -20,6 +20,7 @@ from app.services.cloud_ai.model_registry import MODEL_REGISTRY
 from app.services.cloud_ai.adapter import CloudAIAdapter
 from app.services.execution_mode_config import get_execution_mode_config
 from app.core.config import settings
+from app.core.provider_config import get_provider_config
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,9 @@ class CouncilOrchestrationBridge:
         self.ai_council: Optional[OrchestrationLayer] = None
         self.current_request_id: Optional[str] = None
         self._pending_routing_assignments: List[Dict[str, Any]] = []
+        self.provider_config = get_provider_config()
+        self._available_providers: List[str] = []
+        self._provider_selection_log: List[Dict[str, Any]] = []
         
         logger.info("CouncilOrchestrationBridge initialized")
     
@@ -74,9 +78,33 @@ class CouncilOrchestrationBridge:
         """
         self.current_request_id = request_id
         self._pending_routing_assignments = []
+        self._provider_selection_log = []
         
         try:
             logger.info(f"Processing request {request_id} in {execution_mode.value} mode")
+            
+            # Detect available providers at runtime
+            self._available_providers = self._detect_available_providers()
+            
+            if not self._available_providers:
+                logger.error("No AI providers available - cannot process request")
+                await self.ws_manager.broadcast_progress(
+                    request_id,
+                    "error",
+                    {
+                        "message": "No AI providers configured or available",
+                        "error": "Please configure at least one AI provider in .env file"
+                    }
+                )
+                from ai_council.core.models import FinalResponse
+                return FinalResponse(
+                    content="",
+                    overall_confidence=0.0,
+                    success=False,
+                    error_message="No AI providers configured or available"
+                )
+            
+            logger.info(f"Available providers: {', '.join(self._available_providers)}")
             
             # Initialize AI Council with cloud AI adapters and execution mode config
             self.ai_council = self._create_ai_council(execution_mode)
@@ -142,15 +170,189 @@ class CouncilOrchestrationBridge:
         finally:
             self.current_request_id = None
             self._pending_routing_assignments = []
+            self._provider_selection_log = []
+    
+    def _detect_available_providers(self) -> List[str]:
+        """
+        Detect which providers are available at runtime based on API key configuration.
+        
+        Returns:
+            List of available provider names
+        """
+        available = []
+        configured_providers = self.provider_config.get_configured_providers()
+        
+        logger.info(f"Detecting available providers from {len(configured_providers)} configured providers")
+        
+        for provider_name in configured_providers:
+            # Check if provider has valid API key or endpoint
+            api_key = self.provider_config.get_api_key(provider_name)
+            
+            if provider_name == "ollama":
+                # Ollama doesn't need API key, just check if endpoint is configured
+                endpoint = self.provider_config.get_endpoint(provider_name)
+                if endpoint:
+                    available.append(provider_name)
+                    logger.info(f"✓ Provider '{provider_name}' available (endpoint: {endpoint})")
+            elif api_key:
+                available.append(provider_name)
+                logger.info(f"✓ Provider '{provider_name}' available (API key configured)")
+            else:
+                logger.warning(f"✗ Provider '{provider_name}' configured but no API key found")
+        
+        if not available:
+            logger.warning("⚠️  No providers available! Please configure API keys in .env file")
+        else:
+            logger.info(f"Total available providers: {len(available)}")
+        
+        return available
+    
+    def _prioritize_providers_for_subtask(
+        self,
+        subtask_type: Any,
+        available_models: List[str]
+    ) -> List[str]:
+        """
+        Prioritize providers for a subtask based on: availability > cost > latency > capabilities.
+        
+        Args:
+            subtask_type: The task type for the subtask
+            available_models: List of model IDs that support this task type
+            
+        Returns:
+            List of model IDs sorted by priority (highest priority first)
+        """
+        # Filter to only models from available providers
+        available_provider_models = [
+            model_id for model_id in available_models
+            if any(model_id.startswith(f"{provider}-") for provider in self._available_providers)
+        ]
+        
+        if not available_provider_models:
+            logger.warning(f"No available provider models for task type: {subtask_type}")
+            return []
+        
+        # Score each model based on priority criteria
+        model_scores = []
+        
+        for model_id in available_provider_models:
+            model_config = MODEL_REGISTRY.get(model_id)
+            if not model_config:
+                continue
+            
+            provider = model_config["provider"]
+            
+            # Calculate priority score (higher is better)
+            # 1. Availability (already filtered, so all are available)
+            availability_score = 100
+            
+            # 2. Cost (lower cost = higher score)
+            avg_cost = (
+                model_config["cost_per_input_token"] + 
+                model_config["cost_per_output_token"]
+            ) / 2
+            # Normalize cost to 0-100 scale (assuming max cost of 0.00003)
+            cost_score = max(0, 100 - (avg_cost / 0.00003 * 100))
+            
+            # 3. Latency (lower latency = higher score)
+            latency = model_config.get("average_latency", 2.0)
+            # Normalize latency to 0-100 scale (assuming max latency of 5s)
+            latency_score = max(0, 100 - (latency / 5.0 * 100))
+            
+            # 4. Capabilities (more capabilities = higher score)
+            capabilities_count = len(model_config.get("capabilities", []))
+            capabilities_score = min(100, capabilities_count * 20)  # Max 5 capabilities
+            
+            # 5. Reliability (higher reliability = higher score)
+            reliability_score = model_config.get("reliability_score", 0.9) * 100
+            
+            # Weighted total score
+            # Availability: 40%, Cost: 25%, Latency: 15%, Capabilities: 10%, Reliability: 10%
+            total_score = (
+                availability_score * 0.40 +
+                cost_score * 0.25 +
+                latency_score * 0.15 +
+                capabilities_score * 0.10 +
+                reliability_score * 0.10
+            )
+            
+            model_scores.append({
+                "model_id": model_id,
+                "provider": provider,
+                "score": total_score,
+                "cost": avg_cost,
+                "latency": latency,
+                "reliability": model_config.get("reliability_score", 0.9)
+            })
+        
+        # Sort by score (highest first)
+        model_scores.sort(key=lambda x: x["score"], reverse=True)
+        
+        # Log prioritization decision
+        if model_scores:
+            top_model = model_scores[0]
+            logger.debug(
+                f"Prioritized models for {subtask_type}: "
+                f"top={top_model['model_id']} (score={top_model['score']:.1f}, "
+                f"cost=${top_model['cost']:.6f}, latency={top_model['latency']:.1f}s)"
+            )
+        
+        return [m["model_id"] for m in model_scores]
+    
+    def _log_provider_selection(
+        self,
+        subtask_id: str,
+        subtask_type: Any,
+        selected_model: str,
+        reason: str,
+        alternatives: List[str]
+    ) -> None:
+        """
+        Log provider selection decision for a subtask.
+        
+        Args:
+            subtask_id: ID of the subtask
+            subtask_type: Type of the subtask
+            selected_model: The model that was selected
+            reason: Reason for selection
+            alternatives: List of alternative models that were considered
+        """
+        model_config = MODEL_REGISTRY.get(selected_model, {})
+        provider = model_config.get("provider", "unknown")
+        
+        selection_log = {
+            "subtask_id": subtask_id,
+            "subtask_type": str(subtask_type),
+            "selected_model": selected_model,
+            "selected_provider": provider,
+            "reason": reason,
+            "alternatives": alternatives,
+            "cost_per_token": (
+                model_config.get("cost_per_input_token", 0) +
+                model_config.get("cost_per_output_token", 0)
+            ) / 2,
+            "latency": model_config.get("average_latency", 0),
+            "reliability": model_config.get("reliability_score", 0),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        self._provider_selection_log.append(selection_log)
+        
+        logger.info(
+            f"Provider selection for subtask {subtask_id}: "
+            f"selected={selected_model} (provider={provider}), "
+            f"reason={reason}, "
+            f"alternatives={len(alternatives)}"
+        )
     
     def _create_ai_council(self, execution_mode: ExecutionMode) -> OrchestrationLayer:
         """
-        Create AI Council instance with cloud AI adapters.
+        Create AI Council instance with cloud AI adapters for available providers only.
         
         This method:
         1. Creates AI Council configuration with execution mode settings
         2. Initializes the factory
-        3. Registers cloud AI models from MODEL_REGISTRY
+        3. Registers cloud AI models ONLY from available providers
         4. Returns the orchestration layer
         
         Args:
@@ -189,26 +391,44 @@ class CouncilOrchestrationBridge:
         # Create factory with configured settings
         factory = AICouncilFactory(config)
         
-        # Register cloud AI models from our MODEL_REGISTRY
+        # Register cloud AI models ONLY from available providers
+        registered_count = 0
+        skipped_count = 0
+        
         for model_id, model_config in MODEL_REGISTRY.items():
+            provider = model_config["provider"]
+            
+            # Skip if provider is not available
+            if provider not in self._available_providers:
+                logger.debug(f"Skipping model {model_id} - provider '{provider}' not available")
+                skipped_count += 1
+                continue
+            
             try:
+                # Get API key for this provider
+                api_key = self.provider_config.get_api_key(provider)
+                
+                # For Ollama, use empty string as API key (not needed)
+                if provider == "ollama":
+                    api_key = ""
+                
+                if not api_key and provider != "ollama":
+                    logger.warning(f"No API key for provider '{provider}', skipping model {model_id}")
+                    skipped_count += 1
+                    continue
+                
                 # Create cloud AI adapter
                 adapter = CloudAIAdapter(
-                    provider=model_config["provider"],
-                    model_name=model_config["model_name"],
-                    api_key=self._get_api_key(model_config["provider"])
+                    provider=provider,
+                    model_id=model_config["model_name"],
+                    api_key=api_key
                 )
                 
                 # Create capabilities for the model
                 from ai_council.core.models import ModelCapabilities, TaskType
                 
-                # Map capability strings to TaskType enums
-                task_types = []
-                for cap in model_config["capabilities"]:
-                    try:
-                        task_types.append(TaskType(cap.lower()))
-                    except ValueError:
-                        logger.warning(f"Unknown capability: {cap}")
+                # Capabilities are already TaskType enums in MODEL_REGISTRY
+                task_types = model_config["capabilities"]
                 
                 capabilities = ModelCapabilities(
                     task_types=task_types,
@@ -219,18 +439,30 @@ class CouncilOrchestrationBridge:
                     average_latency=model_config.get("average_latency", 2.0),
                     max_context_length=model_config.get("max_context", 8192),
                     reliability_score=model_config.get("reliability_score", 0.9),
-                    strengths=model_config["capabilities"][:2],
+                    strengths=[str(cap) for cap in model_config["capabilities"][:2]],
                     weaknesses=[]
                 )
                 
                 # Register model with factory's registry
                 factory.model_registry.register_model(adapter, capabilities)
                 
-                logger.info(f"Registered cloud AI model: {model_id}")
+                logger.info(f"✓ Registered model: {model_id} (provider: {provider})")
+                registered_count += 1
                 
             except Exception as e:
                 logger.error(f"Failed to register model {model_id}: {e}")
+                skipped_count += 1
                 continue
+        
+        logger.info(
+            f"Model registration complete: {registered_count} registered, "
+            f"{skipped_count} skipped"
+        )
+        
+        if registered_count == 0:
+            raise RuntimeError(
+                "No models could be registered. Please check your provider configuration."
+            )
         
         # Create and return orchestration layer
         orchestration_layer = factory.create_orchestration_layer()
@@ -240,26 +472,21 @@ class CouncilOrchestrationBridge:
     
     def _get_api_key(self, provider: str) -> str:
         """
-        Get API key for a cloud provider.
+        Get API key for a cloud provider using the provider config.
         
         Args:
-            provider: Provider name (groq, together, openrouter, huggingface)
+            provider: Provider name (groq, together, openrouter, huggingface, etc.)
             
         Returns:
-            API key string
+            API key string (empty string if not configured)
         """
-        provider_key_map = {
-            "groq": settings.GROQ_API_KEY,
-            "together": settings.TOGETHER_API_KEY,
-            "openrouter": settings.OPENROUTER_API_KEY,
-            "huggingface": settings.HUGGINGFACE_API_KEY
-        }
+        api_key = self.provider_config.get_api_key(provider)
         
-        api_key = provider_key_map.get(provider, "")
-        if not api_key:
+        if not api_key and provider != "ollama":
             logger.warning(f"No API key configured for provider: {provider}")
+            return ""
         
-        return api_key
+        return api_key or ""
     
     def _setup_event_hooks(self, request_id: str) -> None:
         """
@@ -354,6 +581,7 @@ class CouncilOrchestrationBridge:
         
         Wraps the orchestration layer's _execute_parallel_group method to intercept
         routing decisions and send real-time updates about model assignments.
+        Uses intelligent provider prioritization and fallback logic.
         
         Args:
             request_id: Unique identifier for the request
@@ -370,7 +598,7 @@ class CouncilOrchestrationBridge:
         def hooked_execute_parallel_group(subtasks: List, execution_mode):
             """Wrapped _execute_parallel_group method."""
             
-            # Before executing, capture routing decisions
+            # Before executing, capture routing decisions with intelligent prioritization
             if not routing_complete_sent["sent"]:
                 routing_complete_sent["sent"] = True
                 
@@ -385,25 +613,50 @@ class CouncilOrchestrationBridge:
                             for m in self.ai_council.model_registry.get_models_for_task_type(subtask.task_type)
                         ]
                         
-                        if available_models:
-                            # Use cost optimizer to determine which model will be selected
-                            optimization = self.ai_council.cost_optimizer.optimize_model_selection(
-                                subtask, execution_mode, available_models
-                            )
-                            
-                            assignments.append({
-                                "subtaskId": subtask.id,
-                                "subtaskContent": subtask.content[:100],  # First 100 chars
-                                "taskType": subtask.task_type.value if subtask.task_type else "unknown",
-                                "modelId": optimization.recommended_model,
-                                "reason": optimization.reasoning,
-                                "estimatedCost": optimization.estimated_cost,
-                                "estimatedTime": optimization.estimated_time
-                            })
-                            
-                            logger.debug(f"Routing subtask {subtask.id} to {optimization.recommended_model}")
-                        else:
+                        if not available_models:
                             logger.warning(f"No models available for subtask {subtask.id} with task type {subtask.task_type}")
+                            continue
+                        
+                        # Prioritize models based on availability, cost, latency, capabilities
+                        prioritized_models = self._prioritize_providers_for_subtask(
+                            subtask.task_type,
+                            available_models
+                        )
+                        
+                        if not prioritized_models:
+                            logger.warning(f"No prioritized models for subtask {subtask.id}")
+                            continue
+                        
+                        # Use cost optimizer to determine which model will be selected
+                        # It will pick from the prioritized list
+                        optimization = self.ai_council.cost_optimizer.optimize_model_selection(
+                            subtask, execution_mode, prioritized_models
+                        )
+                        
+                        selected_model = optimization.recommended_model
+                        
+                        # Log provider selection decision
+                        self._log_provider_selection(
+                            subtask_id=subtask.id,
+                            subtask_type=subtask.task_type,
+                            selected_model=selected_model,
+                            reason=optimization.reasoning,
+                            alternatives=prioritized_models[1:6]  # Top 5 alternatives
+                        )
+                        
+                        assignments.append({
+                            "subtaskId": subtask.id,
+                            "subtaskContent": subtask.content[:100],  # First 100 chars
+                            "taskType": subtask.task_type.value if subtask.task_type else "unknown",
+                            "modelId": selected_model,
+                            "provider": MODEL_REGISTRY.get(selected_model, {}).get("provider", "unknown"),
+                            "reason": optimization.reasoning,
+                            "estimatedCost": optimization.estimated_cost,
+                            "estimatedTime": optimization.estimated_time,
+                            "alternativesConsidered": len(prioritized_models) - 1
+                        })
+                        
+                        logger.debug(f"Routing subtask {subtask.id} to {selected_model}")
                             
                     except Exception as e:
                         logger.error(f"Error capturing routing decision for subtask {subtask.id}: {e}")
@@ -413,7 +666,7 @@ class CouncilOrchestrationBridge:
                 # Store assignments to be sent after thread execution
                 if assignments:
                     self._pending_routing_assignments = assignments
-                    logger.info(f"Routing complete: {len(assignments)} subtasks routed")
+                    logger.info(f"Routing complete: {len(assignments)} subtasks routed across {len(set(a['provider'] for a in assignments))} providers")
             
             # Call original method
             return original_execute_parallel_group(subtasks, execution_mode)
@@ -421,7 +674,7 @@ class CouncilOrchestrationBridge:
         # Replace method with hooked version
         self.ai_council._execute_parallel_group = hooked_execute_parallel_group
         
-        logger.debug("Routing layer hooks installed")
+        logger.debug("Routing layer hooks installed with intelligent provider selection")
     
     def _hook_execution_layer(self, request_id: str) -> None:
         """
@@ -429,7 +682,7 @@ class CouncilOrchestrationBridge:
         
         Wraps the execution agent's execute method to intercept subtask execution
         completion and send real-time progress updates including confidence, cost,
-        and execution time.
+        and execution time. Implements intelligent fallback when primary provider fails.
         
         Args:
             request_id: Unique identifier for the request
@@ -445,65 +698,196 @@ class CouncilOrchestrationBridge:
         original_execute = execution_agent.execute
         
         def hooked_execute(subtask, model):
-            """Wrapped execute method."""
-            # Call original execute method
-            response = original_execute(subtask, model)
+            """Wrapped execute method with fallback logic."""
+            primary_model = model
+            primary_model_id = model.get_model_id()
             
-            # Send WebSocket message with execution progress
             try:
-                # Extract metrics from the response
-                confidence = 0.0
-                cost = 0.0
-                execution_time = 0.0
+                # Call original execute method
+                response = original_execute(subtask, model)
                 
-                if response.self_assessment:
-                    confidence = response.self_assessment.confidence_score
-                    cost = response.self_assessment.estimated_cost or 0.0
-                    execution_time = response.self_assessment.execution_time or 0.0
+                # If successful, track which provider handled this subtask
+                provider = MODEL_REGISTRY.get(primary_model_id, {}).get("provider", "unknown")
                 
-                # Prepare progress data
-                progress_data = {
-                    "subtaskId": subtask.id,
-                    "subtaskContent": subtask.content[:100],  # First 100 chars
-                    "modelId": response.model_used,
-                    "status": "completed" if response.success else "failed",
-                    "confidence": confidence,
-                    "cost": cost,
-                    "executionTime": execution_time,
-                    "success": response.success
-                }
-                
-                # Add error message if failed
-                if not response.success and response.error_message:
-                    progress_data["errorMessage"] = response.error_message
-                
-                # Send WebSocket message asynchronously
-                asyncio.create_task(
-                    self.ws_manager.broadcast_progress(
-                        request_id,
-                        "execution_progress",
-                        progress_data
+                # Send WebSocket message with execution progress
+                try:
+                    # Extract metrics from the response
+                    confidence = 0.0
+                    cost = 0.0
+                    execution_time = 0.0
+                    
+                    if response.self_assessment:
+                        confidence = response.self_assessment.confidence_score
+                        cost = response.self_assessment.estimated_cost or 0.0
+                        execution_time = response.self_assessment.execution_time or 0.0
+                    
+                    # Prepare progress data with provider information
+                    progress_data = {
+                        "subtaskId": subtask.id,
+                        "subtaskContent": subtask.content[:100],  # First 100 chars
+                        "modelId": response.model_used,
+                        "provider": provider,
+                        "status": "completed" if response.success else "failed",
+                        "confidence": confidence,
+                        "cost": cost,
+                        "executionTime": execution_time,
+                        "success": response.success,
+                        "usedFallback": False
+                    }
+                    
+                    # Add error message if failed
+                    if not response.success and response.error_message:
+                        progress_data["errorMessage"] = response.error_message
+                    
+                    # Send WebSocket message asynchronously
+                    asyncio.create_task(
+                        self.ws_manager.broadcast_progress(
+                            request_id,
+                            "execution_progress",
+                            progress_data
+                        )
                     )
-                )
+                    
+                    logger.info(
+                        f"Execution progress: subtask={subtask.id}, "
+                        f"model={response.model_used}, "
+                        f"provider={provider}, "
+                        f"confidence={confidence:.2f}, "
+                        f"cost=${cost:.4f}, "
+                        f"time={execution_time:.2f}s"
+                    )
+                    
+                except Exception as e:
+                    logger.error(f"Error sending execution progress update: {e}")
+                    # Don't fail the execution if WebSocket update fails
                 
-                logger.info(
-                    f"Execution progress: subtask={subtask.id}, "
-                    f"model={response.model_used}, "
-                    f"confidence={confidence:.2f}, "
-                    f"cost=${cost:.4f}, "
-                    f"time={execution_time:.2f}s"
-                )
+                return response
                 
             except Exception as e:
-                logger.error(f"Error sending execution progress update: {e}")
-                # Don't fail the execution if WebSocket update fails
-            
-            return response
+                # Primary provider failed - attempt fallback
+                logger.warning(
+                    f"Primary provider failed for subtask {subtask.id}: {e}. "
+                    f"Attempting fallback..."
+                )
+                
+                # Get alternative models for this task type
+                available_models = [
+                    m.get_model_id() 
+                    for m in self.ai_council.model_registry.get_models_for_task_type(subtask.task_type)
+                ]
+                
+                # Remove the failed model
+                fallback_models = [m for m in available_models if m != primary_model_id]
+                
+                if not fallback_models:
+                    logger.error(f"No fallback models available for subtask {subtask.id}")
+                    raise  # Re-raise original exception
+                
+                # Prioritize fallback models
+                prioritized_fallbacks = self._prioritize_providers_for_subtask(
+                    subtask.task_type,
+                    fallback_models
+                )
+                
+                if not prioritized_fallbacks:
+                    logger.error(f"No prioritized fallback models for subtask {subtask.id}")
+                    raise  # Re-raise original exception
+                
+                # Try the top fallback model
+                fallback_model_id = prioritized_fallbacks[0]
+                fallback_model = None
+                
+                # Find the model object
+                for m in self.ai_council.model_registry.get_models_for_task_type(subtask.task_type):
+                    if m.get_model_id() == fallback_model_id:
+                        fallback_model = m
+                        break
+                
+                if not fallback_model:
+                    logger.error(f"Could not find fallback model object for {fallback_model_id}")
+                    raise  # Re-raise original exception
+                
+                logger.info(
+                    f"Using fallback model {fallback_model_id} for subtask {subtask.id} "
+                    f"after {primary_model_id} failed"
+                )
+                
+                # Log the fallback decision
+                self._log_provider_selection(
+                    subtask_id=subtask.id,
+                    subtask_type=subtask.task_type,
+                    selected_model=fallback_model_id,
+                    reason=f"Fallback after {primary_model_id} failed: {str(e)}",
+                    alternatives=prioritized_fallbacks[1:6]
+                )
+                
+                try:
+                    # Execute with fallback model
+                    response = original_execute(subtask, fallback_model)
+                    
+                    # Track which provider handled this subtask (fallback)
+                    fallback_provider = MODEL_REGISTRY.get(fallback_model_id, {}).get("provider", "unknown")
+                    
+                    # Send WebSocket message with execution progress
+                    try:
+                        confidence = 0.0
+                        cost = 0.0
+                        execution_time = 0.0
+                        
+                        if response.self_assessment:
+                            confidence = response.self_assessment.confidence_score
+                            cost = response.self_assessment.estimated_cost or 0.0
+                            execution_time = response.self_assessment.execution_time or 0.0
+                        
+                        progress_data = {
+                            "subtaskId": subtask.id,
+                            "subtaskContent": subtask.content[:100],
+                            "modelId": response.model_used,
+                            "provider": fallback_provider,
+                            "status": "completed" if response.success else "failed",
+                            "confidence": confidence,
+                            "cost": cost,
+                            "executionTime": execution_time,
+                            "success": response.success,
+                            "usedFallback": True,
+                            "primaryModelFailed": primary_model_id,
+                            "fallbackReason": str(e)
+                        }
+                        
+                        if not response.success and response.error_message:
+                            progress_data["errorMessage"] = response.error_message
+                        
+                        asyncio.create_task(
+                            self.ws_manager.broadcast_progress(
+                                request_id,
+                                "execution_progress",
+                                progress_data
+                            )
+                        )
+                        
+                        logger.info(
+                            f"Fallback execution success: subtask={subtask.id}, "
+                            f"fallback_model={response.model_used}, "
+                            f"provider={fallback_provider}, "
+                            f"confidence={confidence:.2f}"
+                        )
+                        
+                    except Exception as ws_error:
+                        logger.error(f"Error sending fallback execution progress: {ws_error}")
+                    
+                    return response
+                    
+                except Exception as fallback_error:
+                    logger.error(
+                        f"Fallback model {fallback_model_id} also failed for subtask {subtask.id}: "
+                        f"{fallback_error}"
+                    )
+                    raise  # Re-raise fallback exception
         
         # Replace method with hooked version
         execution_agent.execute = hooked_execute
         
-        logger.debug("Execution layer hooks installed")
+        logger.debug("Execution layer hooks installed with intelligent fallback")
     
     def _hook_arbitration_layer(self, request_id: str) -> None:
         """
@@ -673,6 +1057,23 @@ class CouncilOrchestrationBridge:
                         "totalExecutionTime": metadata.total_execution_time if hasattr(metadata, 'total_execution_time') else 0.0,
                         "parallelExecutions": metadata.parallel_executions if hasattr(metadata, 'parallel_executions') else 0
                     }
+                
+                # Add provider selection log to metadata
+                if self._provider_selection_log:
+                    final_response_data["providerSelectionLog"] = self._provider_selection_log
+                    
+                    # Summarize provider usage
+                    provider_usage = {}
+                    for log_entry in self._provider_selection_log:
+                        provider = log_entry["selected_provider"]
+                        provider_usage[provider] = provider_usage.get(provider, 0) + 1
+                    
+                    final_response_data["providerUsageSummary"] = provider_usage
+                    
+                    logger.info(
+                        f"Provider usage summary: "
+                        f"{', '.join(f'{p}={c}' for p, c in provider_usage.items())}"
+                    )
                 
                 # Add error message if synthesis failed
                 if not final_response.success and final_response.error_message:

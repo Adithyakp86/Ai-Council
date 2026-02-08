@@ -1,7 +1,10 @@
 """Groq API client for ultra-fast inference."""
 
 import httpx
+import logging
 from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class GroqClient:
@@ -91,3 +94,56 @@ class GroqClient:
             
             data = response.json()
             return data["choices"][0]["message"]["content"]
+
+    def health_check(self) -> Dict[str, any]:
+        """Check if Groq API is accessible and API key is valid.
+        
+        Returns:
+            Dict with health status information
+        """
+        try:
+            # Try a minimal request to check API key validity
+            with httpx.Client(timeout=10.0) as client:
+                response = client.get(
+                    f"{self.BASE_URL}/models",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                    },
+                )
+                response.raise_for_status()
+                
+                data = response.json()
+                models = data.get("data", [])
+                
+                return {
+                    "status": "healthy",
+                    "provider": "groq",
+                    "models_available": len(models),
+                    "note": "Ultra-fast inference"
+                }
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 401:
+                return {
+                    "status": "error",
+                    "provider": "groq",
+                    "error": "Invalid API key"
+                }
+            return {
+                "status": "error",
+                "provider": "groq",
+                "error": f"HTTP {e.response.status_code}"
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "provider": "groq",
+                "error": str(e)
+            }
+    
+    def get_model_id(self) -> str:
+        """Get identifier for this client.
+        
+        Returns:
+            str: Client identifier
+        """
+        return "groq"

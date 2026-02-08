@@ -81,6 +81,9 @@ class CloudAIAdapter(AIModel):
         from .openrouter_client import OpenRouterClient
         from .huggingface_client import HuggingFaceClient
         from .ollama_client import OllamaClient
+        from .gemini_adapter import GeminiClient
+        from .openai_client import OpenAIClient
+        from .qwen_client import QwenClient
         
         if self.provider == 'groq':
             return GroqClient(api_key=self.api_key)
@@ -93,5 +96,11 @@ class CloudAIAdapter(AIModel):
         elif self.provider == 'ollama':
             # For local development/testing
             return OllamaClient(api_key=self.api_key)
+        elif self.provider == 'gemini':
+            return GeminiClient(api_key=self.api_key)
+        elif self.provider == 'openai':
+            return OpenAIClient(api_key=self.api_key)
+        elif self.provider == 'qwen':
+            return QwenClient(api_key=self.api_key)
         else:
             raise ValueError(f"Unsupported provider: {self.provider}")

@@ -7,18 +7,19 @@ This module provides a unified interface for both cloud AI providers and local O
 The system supports three deployment modes:
 
 ### 1. Cloud Mode (Production)
-- Uses cloud AI providers: Groq, Together.ai, OpenRouter, HuggingFace
+- Uses cloud AI providers: Groq, Together.ai, OpenRouter, HuggingFace, Gemini
 - Requires API keys for each provider
 - Best for production deployments
-- Pay-per-use pricing
+- Pay-per-use pricing (some have free tiers)
 
 **Configuration:**
 ```bash
 AI_DEPLOYMENT_MODE=cloud
 GROQ_API_KEY=your_groq_key
 TOGETHER_API_KEY=your_together_key
-OPENROUTER_API_KEY=your_openrouter_key
-HUGGINGFACE_API_KEY=your_huggingface_key
+OPENROUTER_API_KEY=sk-or-v1-your_openrouter_key
+HUGGINGFACE_TOKEN=your_huggingface_token
+GEMINI_API_KEY=your_gemini_key
 ```
 
 ### 2. Local Mode (Development)
@@ -61,14 +62,25 @@ AI_DEPLOYMENT_MODE=hybrid
 - **groq-mixtral-8x7b**: Fast reasoning and creative output
 - **together-mixtral-8x7b**: Reasoning and code generation
 - **together-llama2-70b**: Research and creative output
-- **openrouter-claude-3-sonnet**: Premium quality, all tasks
-- **openrouter-gpt4-turbo**: Premium quality, code and debugging
-- **huggingface-mistral-7b**: Cost-effective reasoning
+- **openrouter-gpt-3.5-turbo**: Fast, cost-effective general tasks (OpenAI via OpenRouter)
+- **openrouter-claude-instant-1**: Quick responses with good reasoning (Anthropic via OpenRouter)
+- **openrouter-llama-2-70b-chat**: Open-source, powerful for research (Meta via OpenRouter)
+- **openrouter-palm-2-chat-bison**: Conversational AI with fact-checking (Google via OpenRouter)
+- **openrouter-claude-3-sonnet**: Premium quality, all tasks (Anthropic via OpenRouter)
+- **openrouter-gpt4-turbo**: Premium quality, code and debugging (OpenAI via OpenRouter)
+- **huggingface-mistral-7b**: Cost-effective reasoning (free tier)
+- **gemini-pro**: Google's AI with free tier (60 req/min)
+- **openai-gpt-3.5-turbo**: OpenAI's fast model (optional, requires payment)
+- **openai-gpt-4**: OpenAI's most capable model (optional, requires payment)
+- **qwen-turbo**: Alibaba Cloud's fast model (optional, free tier in some regions)
+- **qwen-plus**: Alibaba Cloud's balanced model (optional, free tier in some regions)
+- **qwen-max**: Alibaba Cloud's best model (optional, free tier in some regions)
 
 ### Local Models (Development)
 - **ollama-llama2**: General purpose reasoning
 - **ollama-mistral**: Code generation and reasoning
 - **ollama-codellama**: Specialized for code tasks
+- **ollama-phi**: Lightweight, fast inference
 
 ## Usage
 
@@ -146,10 +158,28 @@ print(f"Failures: {stats['failure_count']}")
 CloudAIAdapter (implements AIModel interface)
     ├── GroqClient (cloud)
     ├── TogetherClient (cloud)
-    ├── OpenRouterClient (cloud)
+    ├── OpenRouterClient (cloud) - Unified access to OpenAI, Anthropic, Google, Meta
     ├── HuggingFaceClient (cloud)
+    ├── GeminiClient (cloud)
     └── OllamaClient (local)
 ```
+
+### OpenRouter Special Features
+
+OpenRouter provides unified access to multiple AI providers through a single API key:
+- **OpenAI models**: GPT-3.5, GPT-4
+- **Anthropic models**: Claude Instant, Claude 3
+- **Google models**: PaLM 2
+- **Meta models**: Llama 2
+
+Benefits:
+- Single API key for multiple providers
+- Transparent pricing and usage tracking
+- Free credits on signup ($1-5)
+- Automatic fallback between providers
+- No need for separate OpenAI/Anthropic accounts
+
+See [backend/docs/OPENROUTER_SETUP.md](../../docs/OPENROUTER_SETUP.md) for detailed setup.
 
 ## Benefits of Hybrid Approach
 
@@ -180,8 +210,11 @@ AI_DEPLOYMENT_MODE=cloud|local|hybrid  # Default: cloud
 # Cloud provider API keys
 GROQ_API_KEY=your_key_here
 TOGETHER_API_KEY=your_key_here
-OPENROUTER_API_KEY=your_key_here
-HUGGINGFACE_API_KEY=your_key_here
+OPENROUTER_API_KEY=sk-or-v1-your_key_here  # Get from https://openrouter.ai/keys
+HUGGINGFACE_TOKEN=hf_your_token_here
+GEMINI_API_KEY=your_key_here
+OPENAI_API_KEY=your_key_here  # Optional
+QWEN_API_KEY=your_key_here  # Optional, free tier in some regions
 
 # Ollama configuration (for local/hybrid mode)
 OLLAMA_BASE_URL=http://localhost:11434  # Default

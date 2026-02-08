@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.config import settings
+from app.core.provider_config import initialize_provider_config
 from app.api import auth, websocket, example_protected, council, user, admin
 from app.services.websocket_manager import websocket_manager
 
@@ -35,8 +36,12 @@ class RateLimitHeaderMiddleware(BaseHTTPMiddleware):
 async def lifespan(app: FastAPI):
     """
     Lifespan context manager for startup and shutdown events.
-    Starts the WebSocket heartbeat loop on startup.
+    Starts the WebSocket heartbeat loop on startup and initializes provider configuration.
     """
+    # Startup: Initialize provider configuration
+    logger.info("Initializing AI provider configuration...")
+    provider_config = initialize_provider_config()
+    
     # Startup: Start WebSocket heartbeat loop
     logger.info("Starting WebSocket heartbeat loop...")
     heartbeat_task = asyncio.create_task(websocket_manager.heartbeat_loop())
@@ -85,8 +90,37 @@ app.include_router(admin.router, prefix=settings.API_V1_PREFIX)
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy", "version": "1.0.0"}
+    """Health check endpoint with provider status."""
+    from app.core.provider_config import get_provider_config
+    
+    provider_config = get_provider_config()
+    configured_providers = provider_config.get_configured_providers()
+    
+    return {
+        "status": "healthy",
+        "version": "1.0.0",
+        "providers": {
+            "configured": len(configured_providers),
+            "names": configured_providers,
+        }
+    }
+
+
+@app.get("/health/providers")
+async def health_check_providers():
+    """Detailed health check for all AI providers."""
+    from app.core.provider_config import get_provider_config
+    
+    provider_config = get_provider_config()
+    health_status = await provider_config.check_all_providers_health()
+    
+    return {
+        "status": "healthy",
+        "providers": {
+            name: status.value
+            for name, status in health_status.items()
+        }
+    }
 
 
 @app.get("/")

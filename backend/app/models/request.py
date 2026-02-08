@@ -36,6 +36,9 @@ class Request(Base):
     subtasks: Mapped[List["Subtask"]] = relationship(
         "Subtask", back_populates="request", cascade="all, delete-orphan"
     )
+    provider_costs: Mapped[List["ProviderCostBreakdown"]] = relationship(
+        "ProviderCostBreakdown", back_populates="request", cascade="all, delete-orphan"
+    )
 
     def __repr__(self) -> str:
         return f"<Request(id={self.id}, user_id={self.user_id}, status={self.status})>"

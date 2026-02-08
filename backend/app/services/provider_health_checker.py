@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import time
+import os
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Any
 import httpx
@@ -41,31 +42,83 @@ class ProviderHealthStatus:
 class ProviderHealthChecker:
     """Health checker for cloud AI providers with caching."""
     
-    # Provider health check endpoints (lightweight endpoints for health checks)
-    HEALTH_CHECK_ENDPOINTS = {
-        "groq": "https://api.groq.com/openai/v1/models",
-        "together": "https://api.together.xyz/v1/models",
-        "openrouter": "https://openrouter.ai/api/v1/models",
-        "huggingface": "https://huggingface.co/api/models"
-    }
-    
     CACHE_TTL = 60  # Cache health status for 1 minute
-    TIMEOUT = 5.0  # 5 second timeout for health checks
+    TIMEOUT = 10.0  # 10 second timeout for health checks
     
     def __init__(self):
         self.circuit_breaker = get_circuit_breaker()
+        self._clients_cache = {}
     
     def _get_cache_key(self, provider: str) -> str:
         """Get Redis cache key for provider health status."""
         return f"provider:health:{provider}"
     
-    async def _check_provider_endpoint(self, provider: str, url: str) -> ProviderHealthStatus:
+    def _get_provider_client(self, provider: str):
         """
-        Check a single provider's health by pinging its endpoint.
+        Get or create a client instance for the provider.
         
         Args:
             provider: Provider name
-            url: Health check endpoint URL
+            
+        Returns:
+            Client instance or None if API key not configured
+        """
+        # Check cache first
+        if provider in self._clients_cache:
+            return self._clients_cache[provider]
+        
+        # Import clients dynamically to avoid circular imports
+        from app.services.cloud_ai.groq_client import GroqClient
+        from app.services.cloud_ai.together_client import TogetherClient
+        from app.services.cloud_ai.openrouter_client import OpenRouterClient
+        from app.services.cloud_ai.huggingface_client import HuggingFaceClient
+        from app.services.cloud_ai.gemini_adapter import GeminiClient
+        from app.services.cloud_ai.openai_client import OpenAIClient
+        from app.services.cloud_ai.ollama_client import OllamaClient
+        from app.services.cloud_ai.qwen_client import QwenClient
+        
+        # Map provider names to environment variables and client classes
+        provider_config = {
+            "groq": ("GROQ_API_KEY", GroqClient),
+            "together": ("TOGETHER_API_KEY", TogetherClient),
+            "openrouter": ("OPENROUTER_API_KEY", OpenRouterClient),
+            "huggingface": ("HUGGINGFACE_TOKEN", HuggingFaceClient),
+            "gemini": ("GEMINI_API_KEY", GeminiClient),
+            "openai": ("OPENAI_API_KEY", OpenAIClient),
+            "qwen": ("QWEN_API_KEY", QwenClient),
+            "ollama": ("OLLAMA_ENDPOINT", OllamaClient),
+        }
+        
+        if provider not in provider_config:
+            logger.warning(f"Unknown provider: {provider}")
+            return None
+        
+        env_var, client_class = provider_config[provider]
+        api_key = os.getenv(env_var, "")
+        
+        if not api_key:
+            logger.debug(f"No API key configured for {provider}")
+            return None
+        
+        try:
+            # Special handling for Ollama (uses endpoint instead of API key)
+            if provider == "ollama":
+                client = client_class(base_url=api_key)
+            else:
+                client = client_class(api_key=api_key)
+            
+            self._clients_cache[provider] = client
+            return client
+        except Exception as e:
+            logger.error(f"Error creating client for {provider}: {e}")
+            return None
+    
+    async def _check_provider_with_client(self, provider: str) -> ProviderHealthStatus:
+        """
+        Check a provider's health using its client's health_check method.
+        
+        Args:
+            provider: Provider name
             
         Returns:
             ProviderHealthStatus object
@@ -73,39 +126,49 @@ class ProviderHealthChecker:
         start_time = time.time()
         
         try:
-            async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
-                response = await client.get(url)
-                
-                response_time_ms = (time.time() - start_time) * 1000
-                
-                # Check response status
-                if response.status_code == 200:
-                    # Healthy response
-                    status = "healthy"
-                    error_message = None
-                elif 200 < response.status_code < 500:
-                    # Degraded (client error but server is responding)
-                    status = "degraded"
-                    error_message = f"HTTP {response.status_code}"
-                else:
-                    # Down (server error)
-                    status = "down"
-                    error_message = f"HTTP {response.status_code}"
-                
+            client = self._get_provider_client(provider)
+            
+            if client is None:
                 return ProviderHealthStatus(
-                    status=status,
+                    status="down",
                     last_check=datetime.utcnow(),
-                    response_time_ms=response_time_ms,
-                    error_message=error_message
+                    error_message="API key not configured"
                 )
-                
-        except httpx.TimeoutException:
+            
+            # Call the client's health_check method
+            # Run in thread pool to avoid blocking
+            import asyncio
+            loop = asyncio.get_event_loop()
+            health_result = await loop.run_in_executor(None, client.health_check)
+            
+            response_time_ms = (time.time() - start_time) * 1000
+            
+            # Parse health result
+            status = health_result.get("status", "error")
+            error_message = health_result.get("error")
+            
+            # Map status values
+            if status == "healthy":
+                final_status = "healthy"
+            elif status == "down":
+                final_status = "down"
+            else:
+                final_status = "degraded"
+            
+            return ProviderHealthStatus(
+                status=final_status,
+                last_check=datetime.utcnow(),
+                response_time_ms=response_time_ms,
+                error_message=error_message
+            )
+            
+        except asyncio.TimeoutError:
             response_time_ms = (time.time() - start_time) * 1000
             return ProviderHealthStatus(
                 status="down",
                 last_check=datetime.utcnow(),
                 response_time_ms=response_time_ms,
-                error_message="Request timeout"
+                error_message="Health check timeout"
             )
         except Exception as e:
             response_time_ms = (time.time() - start_time) * 1000
@@ -145,16 +208,8 @@ class ProviderHealthChecker:
         except Exception as e:
             logger.warning(f"Error reading health cache for {provider}: {e}")
         
-        # Cache miss or error - perform health check
-        if provider not in self.HEALTH_CHECK_ENDPOINTS:
-            return ProviderHealthStatus(
-                status="down",
-                last_check=datetime.utcnow(),
-                error_message=f"Unknown provider: {provider}"
-            )
-        
-        url = self.HEALTH_CHECK_ENDPOINTS[provider]
-        health_status = await self._check_provider_endpoint(provider, url)
+        # Cache miss or error - perform health check using client
+        health_status = await self._check_provider_with_client(provider)
         
         # Also consider circuit breaker state
         circuit_state = self.circuit_breaker.get_state(provider)
@@ -167,6 +222,8 @@ class ProviderHealthChecker:
             # Circuit breaker is testing - provider is degraded
             if health_status.status == "healthy":
                 health_status.status = "degraded"
+                if not health_status.error_message:
+                    health_status.error_message = "Circuit breaker testing"
         
         # Cache the result
         try:
@@ -185,12 +242,13 @@ class ProviderHealthChecker:
     
     async def check_all_providers(self) -> Dict[str, ProviderHealthStatus]:
         """
-        Check health of all providers concurrently.
+        Check health of all configured providers concurrently.
         
         Returns:
             Dictionary mapping provider names to health status
         """
-        providers = list(self.HEALTH_CHECK_ENDPOINTS.keys())
+        # List of all supported providers
+        providers = ["groq", "together", "openrouter", "huggingface", "gemini", "openai", "ollama", "qwen"]
         
         # Check all providers concurrently
         tasks = [

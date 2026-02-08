@@ -18,6 +18,23 @@ import {
   Target,
 } from 'lucide-react';
 
+interface ProviderCostBreakdown {
+  providerName: string;
+  requestCount: number;
+  totalSubtasks: number;
+  totalCost: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+}
+
+interface ProviderCostData {
+  byProvider: ProviderCostBreakdown[];
+  totalCost: number;
+  totalRequests: number;
+  estimatedSavings: number;
+  freeProviderUsagePercent: number;
+}
+
 interface DashboardStats {
   totalRequests: number;
   totalCost: number;
@@ -26,6 +43,7 @@ interface DashboardStats {
   requestsOverTime: Array<{ date: string; count: number }>;
   topModels: Array<{ modelId: string; count: number; avgCost: number }>;
   averageResponseTime: number;
+  providerCostBreakdown: ProviderCostData;
 }
 
 function DashboardContent() {
@@ -248,6 +266,74 @@ function DashboardContent() {
                         </div>
                       </div>
                     ))}
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Provider Cost Breakdown */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Cost by Provider</CardTitle>
+                  <CardDescription>
+                    Spending breakdown across AI providers
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    {stats.providerCostBreakdown.byProvider.slice(0, 5).map((provider, index) => {
+                      const percentage = stats.providerCostBreakdown.totalCost > 0
+                        ? (provider.totalCost / stats.providerCostBreakdown.totalCost) * 100
+                        : 0;
+                      const isFree = ['ollama', 'huggingface', 'gemini'].includes(provider.providerName.toLowerCase());
+                      
+                      return (
+                        <div key={index}>
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium capitalize">
+                                {provider.providerName}
+                              </span>
+                              {isFree && (
+                                <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded">
+                                  Free
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-right">
+                              <div className="text-sm font-medium">
+                                ${provider.totalCost.toFixed(4)}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {provider.requestCount} req
+                              </div>
+                            </div>
+                          </div>
+                          <div className="h-2 bg-muted rounded-full overflow-hidden">
+                            <div
+                              className={`h-full transition-all ${isFree ? 'bg-green-500' : 'bg-primary'}`}
+                              style={{ width: `${percentage}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                    
+                    {stats.providerCostBreakdown.estimatedSavings > 0 && (
+                      <div className="mt-4 pt-4 border-t">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-muted-foreground">Estimated Savings</span>
+                          <span className="font-medium text-green-600">
+                            ${stats.providerCostBreakdown.estimatedSavings.toFixed(4)}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-sm mt-1">
+                          <span className="text-muted-foreground">Free Provider Usage</span>
+                          <span className="font-medium">
+                            {stats.providerCostBreakdown.freeProviderUsagePercent.toFixed(0)}%
+                          </span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>

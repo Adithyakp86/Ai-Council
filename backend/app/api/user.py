@@ -1,6 +1,7 @@
 """User endpoints."""
 import logging
 from collections import defaultdict
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -26,6 +27,7 @@ class UserStatsResponse(BaseModel):
     requests_over_time: list[dict]
     top_models: list[dict]
     average_response_time: float
+    provider_cost_breakdown: dict[str, Any]
 
 
 @router.get("/stats", response_model=UserStatsResponse)
@@ -91,7 +93,14 @@ async def get_user_stats(
                 requests_by_mode={},
                 requests_over_time=[],
                 top_models=[],
-                average_response_time=0.0
+                average_response_time=0.0,
+                provider_cost_breakdown={
+                    "by_provider": [],
+                    "total_cost": 0.0,
+                    "total_requests": 0,
+                    "estimated_savings": 0.0,
+                    "free_provider_usage_percent": 0.0
+                }
             )
             
             # Cache empty stats for 5 minutes
@@ -179,6 +188,13 @@ async def get_user_stats(
         else:
             average_response_time = 0.0
         
+        # Get provider cost breakdown
+        from app.services.provider_cost_tracker import get_provider_cost_tracker
+        provider_cost_tracker = get_provider_cost_tracker()
+        provider_cost_breakdown = await provider_cost_tracker.get_provider_costs_for_user(
+            db, current_user.id
+        )
+        
         logger.info(
             f"Statistics calculated for user {current_user.id}: "
             f"total_requests={total_requests}, "
@@ -193,7 +209,8 @@ async def get_user_stats(
             requests_by_mode=dict(requests_by_mode),
             requests_over_time=requests_over_time,
             top_models=top_models,
-            average_response_time=round(average_response_time, 2)
+            average_response_time=round(average_response_time, 2),
+            provider_cost_breakdown=provider_cost_breakdown
         )
         
         # Cache statistics for 5 minutes
