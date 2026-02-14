@@ -5,7 +5,7 @@ execution:
   max_parallel_executions: 3
   max_retries: 3
   default_timeout_seconds: 60.0
-  enable_arbitration: false  # Disable arbitration to keep all responses
+  enable_arbitration: true  # Arbitration enabled for conflict resolution
   enable_synthesis: true
 
 cost:
