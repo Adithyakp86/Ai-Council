@@ -73,6 +73,22 @@ async def startup_event():
         
         ai_council = AICouncil(config_path if config_path.exists() else None)
         print("[OK] AI Council initialized successfully")
+    except RuntimeError as e:
+        # Handle configuration validation errors gracefully without stack trace
+        if "Configuration validation failed" in str(e):
+            print("\n" + "="*60)
+            print("[CRITICAL] STARTUP FAILED DUE TO CONFIGURATION ERRORS")
+            print("="*60)
+            print(str(e).replace("Configuration validation failed:", "").strip())
+            print("="*60 + "\n")
+            import sys
+            sys.exit(1)
+        
+        # Fall through for other RuntimeErrors
+        print(f"[ERROR] Failed to initialize AI Council: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise
     except Exception as e:
         print(f"[ERROR] Failed to initialize AI Council: {str(e)}")
         import traceback

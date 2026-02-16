@@ -51,6 +51,13 @@ class AICouncil:
         # Create factory for dependency injection
         self.factory = AICouncilFactory(self.config)
         
+        # Validate configuration
+        validation_issues = self.factory.validate_configuration()
+        if validation_issues:
+            error_msg = "Configuration validation failed:\n" + "\n".join(f"- {issue}" for issue in validation_issues)
+            self.logger.error(error_msg)
+            raise RuntimeError(error_msg)
+        
         # Initialize orchestration layer
         self.orchestration_layer: OrchestrationLayer = self.factory.create_orchestration_layer()
         
