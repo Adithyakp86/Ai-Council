@@ -216,6 +216,17 @@ class AdaptiveTimeoutManager:
         self.max_history_size = 100
         self._lock = threading.Lock()
     
+    def update_defaults(self, custom_defaults: dict[str, float]):
+        """Update default timeouts with values from configuration."""
+        if not custom_defaults:
+            return
+            
+        with self._lock:
+            for operation, timeout in custom_defaults.items():
+                if timeout > 0:
+                    self.default_timeouts[operation] = timeout
+                    logger.debug(f"Updated default timeout for {operation} to {timeout}s")
+    
     def record_execution_time(self, operation: str, execution_time: float):
         """Record execution time for an operation."""
         with self._lock:

@@ -96,6 +96,7 @@ class ExecutionConfig:
     enable_arbitration: bool = True
     enable_synthesis: bool = True
     default_accuracy_requirement: float = 0.8
+    strategy_timeouts: Dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -294,6 +295,7 @@ class AICouncilConfig:
                 'enable_arbitration': self.execution.enable_arbitration,
                 'enable_synthesis': self.execution.enable_synthesis,
                 'default_accuracy_requirement': self.execution.default_accuracy_requirement,
+                'strategy_timeouts': self.execution.strategy_timeouts,
             },
             'cost': {
                 'max_cost_per_request': self.cost.max_cost_per_request,

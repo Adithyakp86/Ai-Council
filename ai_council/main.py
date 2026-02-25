@@ -50,6 +50,10 @@ class AICouncil:
         self.logger = get_logger(__name__)
         self.logger.info("Initializing AI Council application")
         
+        # Update adaptive timeout defaults from configuration
+        from .core.timeout_handler import adaptive_timeout_manager
+        adaptive_timeout_manager.update_defaults(self.config.execution.strategy_timeouts)
+        
         # Create factory for dependency injection
         self.factory = AICouncilFactory(self.config)
         

@@ -7,6 +7,12 @@ execution:
   default_timeout_seconds: 60.0
   enable_arbitration: true  # Arbitration enabled for conflict resolution
   enable_synthesis: true
+  strategy_timeouts:
+    model_execution: 30.0
+    analysis: 10.0
+    decomposition: 15.0
+    arbitration: 20.0
+    synthesis: 15.0
 
 cost:
   max_cost_per_request: 1.0
