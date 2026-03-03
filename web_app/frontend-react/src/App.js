@@ -18,6 +18,7 @@ import History from './pages/History';
 
 // Components
 import ProtectedRoute from './components/ProtectedRoute';
+import { SessionWarningModal } from './components/SessionWarningModal';
 
 function App() {
   const { isAuthenticated } = useAuthStore();
@@ -59,6 +60,7 @@ function App() {
           },
         }}
       />
+      <SessionWarningModal />
     <Router>
       <Routes>
         {/* Public Routes */}
