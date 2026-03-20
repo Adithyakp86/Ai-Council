@@ -150,10 +150,48 @@ class BaseExecutionAgent(ExecutionAgent):
                 
                 # Handle recovery action
                 if not recovery_action.should_retry or attempt >= self.max_retries:
-                    if recovery_action.fallback_model:
-                        # Try fallback model
-                        return await self._execute_with_fallback(
-                            subtask, recovery_action.fallback_model, start_time, depth
+                    fallback_models = []
+                    if recovery_action.metadata and "fallback_models" in recovery_action.metadata:
+                        fallback_models = recovery_action.metadata["fallback_models"]
+                    elif recovery_action.fallback_model:
+                        fallback_models = [recovery_action.fallback_model]
+                        
+                    if fallback_models:
+                        logger.info("Iterating over fallback chain", extra={
+                            "subtask_id": subtask.id, 
+                            "original_model": model_id,
+                            "fallback_chain": fallback_models
+                        })
+                        fallback_errors = []
+                        for fallback_model_id in fallback_models:
+                            # Try fallback model
+                            response = await self._execute_with_fallback(
+                                subtask, fallback_model_id, start_time, depth
+                            )
+                            if response.success:
+                                # Log transition
+                                logger.info("Fallback execution successful", extra={
+                                    "subtask_id": subtask.id,
+                                    "original_model": model_id,
+                                    "successful_fallback": fallback_model_id
+                                })
+                                # Attach fallback metadata
+                                if response.metadata is None:
+                                    response.metadata = {}
+                                response.metadata["fallback_attempts"] = response.metadata.get("fallback_attempts", 0) + 1
+                                response.metadata["fallback_failures"] = fallback_errors
+                                return response
+                            
+                            # Collect error and try the next one
+                            fallback_errors.append({
+                                "model_id": fallback_model_id,
+                                "error": response.error_message
+                            })
+                            logger.warning(f"Fallback model {fallback_model_id} failed: {response.error_message}")
+                            
+                        # If all fallbacks failed
+                        return self._create_failure_response(
+                            subtask, model_id, f"All fallback models failed. Last error: {fallback_errors[-1]['error'] if fallback_errors else str(last_error)}", start_time
                         )
                     elif recovery_action.skip_subtask:
                         # Skip this subtask
@@ -228,6 +266,12 @@ class BaseExecutionAgent(ExecutionAgent):
         elif "quota" in error_type_name.lower() or "exceeded" in str(error).lower():
             failure_type = FailureType.QUOTA_EXCEEDED
             severity = RiskLevel.MEDIUM
+        elif "content" in error_type_name.lower() or "filter" in str(error).lower():
+            failure_type = FailureType.VALIDATION_ERROR
+            severity = RiskLevel.MEDIUM
+        elif "provider" in error_type_name.lower() or "providererror" in error_type_name.lower():
+            failure_type = FailureType.API_FAILURE
+            severity = RiskLevel.HIGH
         else:
             failure_type = FailureType.API_FAILURE
             severity = RiskLevel.MEDIUM
