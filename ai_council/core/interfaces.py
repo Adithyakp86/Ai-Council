@@ -211,15 +211,17 @@ class ExecutionAgent(ABC):
         pass
     
     @abstractmethod
-    async def generate_self_assessment(self, response: str, subtask: Subtask) -> SelfAssessment:
-        """Generate a self-assessment of the agent's performance.
+    async def generate_self_assessment(self, response: str, subtask: Subtask, model_id: str) -> SelfAssessment:
+        """
+        Generate a self-assessment for a model's response.
         
         Args:
-            response: The generated response content
+            response: The model's response content
             subtask: The subtask that was executed
+            model_id: The ID of the model used
             
         Returns:
-            SelfAssessment: Structured self-assessment metadata
+            SelfAssessment: The generated assessment
         """
         pass
     
@@ -401,6 +403,42 @@ class ModelRegistry(ABC):
         Args:
             model_id: The model identifier
             performance: Updated performance metrics
+        """
+        pass
+
+    @abstractmethod
+    def get_model_capabilities(self, model_id: str) -> ModelCapabilities:
+        """Get the capabilities for a specific model.
+        
+        Args:
+            model_id: The model identifier
+            
+        Returns:
+            ModelCapabilities: The model's capabilities
+        """
+        pass
+
+    @abstractmethod
+    def get_model_performance(self, model_id: str) -> PerformanceMetrics:
+        """Get the performance metrics for a specific model.
+        
+        Args:
+            model_id: The model identifier
+            
+        Returns:
+            PerformanceMetrics: The model's performance metrics
+        """
+        pass
+
+    @abstractmethod
+    def get_model_by_id(self, model_id: str) -> Optional[AIModel]:
+        """Get a model by its ID.
+        
+        Args:
+            model_id: The model identifier
+            
+        Returns:
+            Optional[AIModel]: The model if found, None otherwise
         """
         pass
 
